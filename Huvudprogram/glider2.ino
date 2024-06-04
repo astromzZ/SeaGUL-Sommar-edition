@@ -27,7 +27,7 @@ const int stepPin_tr = 6;
 const int sleepPin_tr = 7;
 const int leakpin = ...;
 const int potPin = ;
-const int vent = ;
+const int ventilPin = ;
 const int pumpPin = ;
 const int stepsPerRevolution = 200;
 
@@ -101,7 +101,7 @@ void setup() {
       initialized = true;
     }
 
-    pinMode(potpin, INPUT);
+    pinMode(potPin, INPUT);
 
     pinMode(dropweight_pin, OUTPUT);
   }
@@ -119,8 +119,8 @@ void setup() {
   //..............................................................
 
   //Setup for pump and ventil
-  pinMode(vent, OUTPUT); //Ventil
-  digitalWrite(vent, LOW); //Closed
+  pinMode(ventilPin, OUTPUT); //Ventil
+  digitalWrite(ventilPin, LOW); //Closed
   pinMode(pumpPin, OUTPUT); //Pump
   digitalWrite(pumpPin, LOW); //Closed
 
@@ -154,7 +154,7 @@ void loop() {
 
   Psensor.read();
 
-  float pressure = Psensor.pressure() //tryck från trycksensor
+  float pressure = Psensor.pressure(); //tryck från trycksensor
   if ((pressure < pressure_max) && (pressure > pressure_min)) {
     if (!maxtime_exceeded) {
       if (millis() - lastPressureTime >= maxtime) {
