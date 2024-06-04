@@ -26,8 +26,11 @@ const int dirPin_tr = 5;
 const int stepPin_tr = 6;
 const int sleepPin_tr = 7;
 const int leakpin = ...;
-const int potpin = ;
+const int potPin = ;
+const int vent = ;
+const int pumpPin = ;
 const int stepsPerRevolution = 200;
+
 
 //Värde för orienteringssensorn
 #define AD0_VAL 1
@@ -98,7 +101,7 @@ void setup() {
       initialized = true;
     }
 
-    pinmode(potpin, INPUT);
+    pinMode(potpin, INPUT);
 
     pinMode(dropweight_pin, OUTPUT);
   }
