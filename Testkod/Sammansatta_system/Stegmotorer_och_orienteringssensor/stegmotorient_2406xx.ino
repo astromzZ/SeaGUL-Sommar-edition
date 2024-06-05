@@ -26,9 +26,17 @@ const float real_pitch = -20 * PI / 180;
 // const float real_roll = 0;
 // const float real_yaw = ...;
 
+QueueHandle_t sensorDataQueue;
+
 
 void Orientation(void *pvParameters) {
     while(true) {
+        if (myICM.dataReady()) {
+            
+            myICM.getAGMT();
+
+
+        }
 
     }
 
@@ -53,7 +61,7 @@ void setup() {
 
     xTaskCreatePinnedToCore(Orientation, "Orienteringsdata", 10000, NULL, 1, NULL, 1);
 
-    xTaskCreatePinnedToCore(Vehiclecontrol, "Reglering av tyngdpaket", 10000, NULL, 1, NULL, 1)
+    xTaskCreatePinnedToCore(Vehiclecontrol, "Reglering av tyngdpaket", 10000, NULL, 1, NULL, 1);
 
     bool initialized = false;
     while (!initialized) { 
