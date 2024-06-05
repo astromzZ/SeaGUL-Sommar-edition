@@ -64,9 +64,9 @@ void loop() {
     Serial.print(yaw * 180 / PI); // Convert to degrees
     Serial.println();
 
-    pitch_reg();
-    roll_reg();
-    yaw_reg();
+    // pitch_reg();
+    // roll_reg();
+    // yaw_reg();
   }
   
   else {
