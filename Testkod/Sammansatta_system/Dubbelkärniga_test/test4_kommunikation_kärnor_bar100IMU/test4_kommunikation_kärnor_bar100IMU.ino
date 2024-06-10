@@ -4,6 +4,7 @@
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
 #include <KellerLD.h>
+// #include <MS5837.h>
 
 
 #define SDA_PIN 17
@@ -31,6 +32,8 @@ QueueHandle_t sensorDataQueue;
 
 SemaphoreHandle_t printMutex;
 
+// SemaphoreHandle_t i2cMutex;
+
 void printing(void* pvParameters);
 
 void orientation(void* pvParameters0);
@@ -52,10 +55,16 @@ void setup() {
 
     printMutex = xSemaphoreCreateMutex();
     if (printMutex == NULL) {
-        Serial.println("Failed to create mutex");
+        Serial.println("Failed to create print mutex");
         return;
     }
-  
+
+    // i2cMutex = xSemaphoreCreateMutex();
+    // if (i2cMutex == NULL) {
+    //     Serial.print("Failed to create i2c mutex");
+    //     return;
+    // }
+
     bool initialized = false;
     while (!initialized) { 
         myICM.begin(Wire, AD0_VAL);
@@ -69,7 +78,14 @@ void setup() {
             initialized = true;
         }
     }  
-    digitalWrite(LED_BUILTIN, LOW);
+
+    // while (!Psensor.init()) {
+    //     Serial.println("Init failed!");
+    //     Serial.println("Are SDA/SCL connected correctly?");
+    //     Serial.println("Blue Robotics Bar30: White=SDA, Green=SCL");
+    //     Serial.println("\n\n\n");
+    //     delay(5000);
+    // }
 
     Psensor.init();
     Psensor.setFluidDensity(997); // kg/m^3 (freshwater, 1029 for seawater)
@@ -160,6 +176,7 @@ void orientation(void* pvParameters) {
             data.sensor2Data = -atan2(-myICM.accX(), myICM.accZ());
 
             //Pressure and depth
+            Psensor.read();
             data.sensor3Data = Psensor.pressure();
             data.sensor4Data = Psensor.depth();
 
@@ -187,7 +204,6 @@ void orientation(void* pvParameters) {
                 Serial.print("Depth: ");
                 Serial.print(data.sensor4Data);
                 Serial.print(" m\t");
-
 
                 Serial.print("Core: ");
                 Serial.print(xPortGetCoreID());

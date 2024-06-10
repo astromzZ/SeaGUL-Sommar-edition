@@ -39,12 +39,15 @@ THE SOFTWARE.
 
 KellerLD sensor;
 
+#define SDA_PIN 17
+#define SCL_PIN 16
+
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   
   Serial.println("Starting");
   
-  Wire.begin();
+  Wire.begin(SDA_PIN, SCL_PIN);
 
   sensor.init();
   sensor.setFluidDensity(997); // kg/m^3 (freshwater, 1029 for seawater)

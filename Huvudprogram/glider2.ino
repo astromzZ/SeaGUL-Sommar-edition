@@ -1,5 +1,5 @@
 #include <Wire.h>
-//#include "SoftwareSerial.h"
+// #include "SoftwareSerial.h"
 #include <Adafruit_Sensor.h>
 #include <utility/imumaths.h>
 #include <Stepper.h>
@@ -7,9 +7,9 @@
 #include "MS5837.h"
 #include <SparkFun_Qwiic_OpenLog_Arduino_Library.h>
 #include <ICM_20948.h>
-#include <Adafruit_INA228.h>
 #include <TSYS01.h>
 #include "ICM_20948.h"
+#include <Adafruit_INA228.h>
 
 #define STATUS_SD_INIT_GOOD 0
 #define STATUS_LAST_COMMAND_SUCCESS 1

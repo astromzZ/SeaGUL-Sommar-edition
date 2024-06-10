@@ -1,11 +1,17 @@
 #include <Wire.h>
 #include "KellerLD.h"
+#include <Arduino.h>
+// #include "SoftwareSerial.h"
+// #include <HardwareSerial.h>
+
+#define SDA_PIN 17
+#define SCL_PIN 16
 
 KellerLD Psensor;
 
 void setup() {
+
   Serial.begin(115200);
-  
   Serial.println("Starting");
   
   Wire.begin();
