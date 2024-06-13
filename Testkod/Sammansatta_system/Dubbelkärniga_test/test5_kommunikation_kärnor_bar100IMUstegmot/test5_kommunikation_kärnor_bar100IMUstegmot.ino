@@ -8,14 +8,31 @@
 #include <DRV8825.h>
 #include <MultiDriver.h>
 #include <SyncDriver.h>
+#include <Arduino.h>
 
 // #include <MS5837.h>
 
 
-#define SDA_PIN 17
-#define SCL_PIN 16
+#define SDA_PIN 13
+#define SCL_PIN 14
 
 #define AD0_VAL 1
+
+#define DIR_PIN 9
+#define STEP_PIN 46
+#define SLEEP_PIN 3
+
+#define PITCHTHRESHOLD 20
+
+#define stepsPerRevolution 200
+
+#define RPM 186
+
+#include "DRV8825.h"
+#define MODE0 10
+#define MODE1 11
+#define MODE2 12
+DRV8825 stepper(stepsPerRevolution, DIR_PIN, STEP_PIN, SLEEP_PIN, MODE0, MODE1, MODE2);
 
 ICM_20948_I2C myICM;
 
@@ -39,7 +56,7 @@ SemaphoreHandle_t printMutex;
 
 // SemaphoreHandle_t i2cMutex;
 
-void stepper(void* pvParameters);
+void steppermotor(void* pvParameters);
 
 void orientation(void* pvParameters0);
 
@@ -47,6 +64,13 @@ void orientation(void* pvParameters0);
 void setup() {
     // Declare pins as output:
     pinMode(LED_BUILTIN, OUTPUT);
+    pinMode(STEP_PIN, OUTPUT);
+    pinMode(DIR_PIN, OUTPUT);
+    pinMode(SLEEP_PIN, OUTPUT);
+
+    stepper.begin(RPM);
+
+    stepper.enable();
     //put your setup code here, to run once:
     Wire.begin(SDA_PIN, SCL_PIN);
     Wire.setClock(400000);
@@ -113,7 +137,7 @@ void setup() {
     );
 
     xTaskCreatePinnedToCore(
-        stepper,
+        steppermotor,
         "driving of stepper motor",
         2048,
         NULL,
@@ -132,43 +156,64 @@ void loop() {
     // }
 }
 
-void stepper(void* pvParameters) {
+void steppermotor(void* pvParameters) {
     SensorData receivedData;
+    bool motorRunning = false;
+
     while (true) {
         if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
-            if (xSemaphoreTake(printMutex, portMAX_DELAY)){
-                Serial.print("Pitch:");
-                Serial.print(receivedData.sensor1Data * 180 / PI);
-                Serial.print("°\t");
+            // if (xSemaphoreTake(printMutex, portMAX_DELAY)){
+            //     Serial.print("Pitch:");
+            //     Serial.print(receivedData.sensor1Data * 180 / PI);
+            //     Serial.print("°\t");
 
-                Serial.print("Roll:");
-                Serial.print(receivedData.sensor2Data * 180 / PI);
-                Serial.print("°\t");
+            //     Serial.print("Roll:");
+            //     Serial.print(receivedData.sensor2Data * 180 / PI);
+            //     Serial.print("°\t");
 
-                Serial.print("Pressure: ");
-                Serial.print(receivedData.sensor3Data);
-                Serial.print(" mbar\t");
+            //     Serial.print("Pressure: ");
+            //     Serial.print(receivedData.sensor3Data);
+            //     Serial.print(" mbar\t");
 
-                Serial.print("Depth: ");
-                Serial.print(receivedData.sensor4Data);
-                Serial.print(" m\t");                
+            //     Serial.print("Depth: ");
+            //     Serial.print(receivedData.sensor4Data);
+            //     Serial.print(" m\t");                
 
-                Serial.print("Core: ");
-                Serial.print(xPortGetCoreID());
+            //     Serial.print("Core: ");
+            //     Serial.print(xPortGetCoreID());
 
-                Serial.println("");
+            //     Serial.println("");
 
-                xSemaphoreGive(printMutex);
+            //     xSemaphoreGive(printMutex);
+            // }
+            // else {
+            //     Serial.print("Printing: Mutex not aquired");
+            // }
+
+            if (receivedData.sensor1Data * 180 / PI >= PITCHTHRESHOLD) {
+                if (!motorRunning) {
+                    digitalWrite(DIR_PIN, HIGH);
+                    digitalWrite(SLEEP_PIN, HIGH);
+                    motorRunning = true;
+                }
+            } else {
+                if (motorRunning) {
+                    digitalWrite(SLEEP_PIN, LOW);
+                    motorRunning = false;
+                }
             }
-            else {
-                Serial.print("Printing: Mutex not aquired");
-            }
-            // Serial.print ("Hello");
-            // Serial.print (" World from printing() at ");
-            // Serial.println (xPortGetCoreID());
         }
+
+        if (motorRunning) {
+            stepper.setMicrostep(1);
+            stepper.move(-10);
+            // delayMicroseconds(1000);
+            }
+
+        // vTaskDelay(1);
     }
 }
+
 
 void orientation(void* pvParameters) {
     while(true) {
@@ -186,13 +231,14 @@ void orientation(void* pvParameters) {
             data.sensor4Data = Psensor.depth();
 
             xQueueSend(sensorDataQueue, &data, portMAX_DELAY);
-            vTaskDelay(100 / portTICK_PERIOD_MS);
+            // vTaskDelay(100 / portTICK_PERIOD_MS);
             
             // Calculate yaw
             // float magX = myICM.magX() * cos(pitch) + myICM.magY() * sin(roll) * sin(pitch) + myICM.magZ() * cos(roll) * sin(pitch);
             // float magY = myICM.magY() * cos(roll) - myICM.magZ() * sin(roll);
             // float yaw = atan2(-magY, magX);
             // -160 * PI / 180;
+
             if (xSemaphoreTake(printMutex, portMAX_DELAY)){
                 Serial.print("Pitch: ");
                 Serial.print(data.sensor1Data * 180 / PI); // Convert to degrees

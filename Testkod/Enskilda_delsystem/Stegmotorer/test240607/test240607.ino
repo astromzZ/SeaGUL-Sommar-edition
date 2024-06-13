@@ -21,10 +21,10 @@
 #define MICROSTEPS 1
 
 // All the wires needed for full functionality
-#define DIR_PIN 17
-#define STEP_PIN 16
+#define DIR_PIN 9
+#define STEP_PIN 46
 //Uncomment line to use enable/disable functionality
-#define SLEEP_PIN 15
+#define SLEEP_PIN 3
 
 #define stepsPerRevolution 200
 
