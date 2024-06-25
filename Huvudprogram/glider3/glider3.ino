@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <ICM_20948.h>
 #include <KellerLD.h>
+#include <Wire.h>
 #include "SparkFun_Qwiic_OpenLog_Arduino_Library.h"
 #include <TSYS01.h>
 
