@@ -304,7 +304,7 @@ const char page_html[] PROGMEM = R"rawliteral(
       <h2>Controls</h2>
       <div class="button-container">
         <button class="button idle-button" onclick="sendMessage('Idle')">Idle</button>
-        <button class="button initiate-dive" onclick="sendMessage('Initiate Dive')">Initiate Dive</button>
+        <button class="button initiate-dive" onclick="initiateDive()">Initiate Dive</button>
         <button class="button calibrate" onclick="sendMessage('Calibrate')">Calibrate</button>
       </div>
       <div class="button-container">
@@ -312,7 +312,7 @@ const char page_html[] PROGMEM = R"rawliteral(
         <button class="button test-button" onclick="sendMessage('Test 2')">Test 2</button>
         <button class="button test-button" onclick="sendMessage('Test 3')">Test 3</button>
         <button class="button test-button" onclick="sendMessage('Test 4')">Test 4</button>
-      </div>
+      </div>  
       <div class="button-container">
         <button class="button test-button" onclick="sendMessage('Test 5')">Test 5</button>
         <button class="button test-button" onclick="sendMessage('Test 6')">Test 6</button>
@@ -363,6 +363,13 @@ const char page_html[] PROGMEM = R"rawliteral(
       var xhr = new XMLHttpRequest();
       xhr.open("GET", "/update?state=" + msg, true);
       xhr.send();
+    }
+  
+    function initiateDive() {
+      sendMessage('Initiate Dive');
+      setTimeout(() => {
+        sendMessage('Diving');
+      }, 1000); // 1 second delay
     }
 
     function toggleMode() {

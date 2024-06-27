@@ -27,6 +27,7 @@ String currentState = "Idle";
 struct SensorData {
     float pitch;
     float roll;
+    float yaw;
     // float depth;
     // float pressure;
     // float potentiometer;
@@ -34,6 +35,7 @@ struct SensorData {
 
 float displaypitch = 0;
 float displayroll = 0;
+float displayyaw = 0;
 
 bool isIdle = false;
 bool isDiving = false;
@@ -75,6 +77,7 @@ void handleInitiateDive() {
   isIdle = false;
   isDiving = true;
   isCalibrating = false;
+  currentState = "Diving";
   Serial.println("Dive Initiated");
   server.send(200, "text/plain", "Dive Initiated");
 }
@@ -125,7 +128,7 @@ void handleData() {
   json += "\"salinity\":" + String(randomFloat(30.0, 50.0)) + ",";
   json += "\"pitch\":" + String(displaypitch) + ",";
   json += "\"roll\":" + String(displayroll) + ",";
-  json += "\"yaw\":" + String(randomFloat(-360.0, 360.0)) + ",";
+  json += "\"yaw\":" + String(displayyaw) + ",";
   json += "\"batteryVoltage\":" + String(randomFloat(22.0, 38.5)) + ",";
   json += "\"compassCourse\":" + String(randomFloat(0.0, 360.0)) + ",";
   json += "\"gnssCoordinates\":\"" + String(randomFloat(-90.0, 90.0), 6) + ", " + String(randomFloat(-180.0, 180.0), 6) + "\",";
@@ -156,6 +159,31 @@ void setup() {
           initialized = true;
       }
   }
+
+  Serial.println("Device connected!");
+
+  bool success = true;
+  success &= (myICM.initializeDMP() == ICM_20948_Stat_Ok);
+  success &= (myICM.enableDMPSensor(INV_ICM20948_SENSOR_GAME_ROTATION_VECTOR) == ICM_20948_Stat_Ok);
+  // success &= (myICM.setDMPODRrate(DMP_ODR_Reg_Quat6, 0) == ICM_20948_Stat_Ok);
+    // Enable the FIFO
+  success &= (myICM.enableFIFO() == ICM_20948_Stat_Ok);
+
+  // Enable the DMP
+  success &= (myICM.enableDMP() == ICM_20948_Stat_Ok);
+
+  // Reset DMP
+  success &= (myICM.resetDMP() == ICM_20948_Stat_Ok);
+
+  // Reset FIFO
+  success &= (myICM.resetFIFO() == ICM_20948_Stat_Ok);
+
+  if (success) {
+      Serial.println("DMP configuration successful");
+  } else {
+      Serial.println("DMP configuration failed");
+  }
+
 
   sensorDataQueue = xQueueCreate(10, sizeof(SensorData));
   if (sensorDataQueue == NULL) {
@@ -208,11 +236,12 @@ void steppermotor(void* pvParameters) {
         if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY) == pdTRUE) {
             // Do something with the data
             // Serial.println("Received data from queue");
-            Serial.print("Pitch: ");
-            Serial.print(receivedData.pitch * 180 / PI);
-            Serial.print(" degrees, Roll: ");
-            Serial.print(receivedData.roll * 180 / PI);
-            Serial.println(" degrees");
+            Serial.print(F("Roll:"));
+            Serial.print(receivedData.roll, 1);
+            Serial.print(F(" Pitch:"));
+            Serial.print(receivedData.pitch, 1);
+            Serial.print(F(" Yaw:"));
+            Serial.println(receivedData.yaw, 1);
 
         } else {
             Serial.println("Failed to receive data from queue");
@@ -221,47 +250,79 @@ void steppermotor(void* pvParameters) {
 }
 
 void datagathering(void* pvParameters) {
+  while (true) {
+      icm_20948_DMP_data_t IMUdata;
+      myICM.readDMPdataFromFIFO(&IMUdata);
 
-    while (true) {
-        if (myICM.dataReady()) {
-            SensorData data;
-            myICM.getAGMT(); // The values are only updated when you call 'getAGMT'
+    if ((myICM.status == ICM_20948_Stat_Ok) || (myICM.status == ICM_20948_Stat_FIFOMoreDataAvail)) {
+        SensorData data;
+        // myICM.getAGMT(); // The values are only updated when you call 'getAGMT'
 
-            // Calculate pitch and roll
-            data.pitch = atan2(myICM.accY(), sqrt(myICM.accX() * myICM.accX() + myICM.accZ() * myICM.accZ()));
-            data.roll = -atan2(-myICM.accX(), myICM.accZ());
+        if ((IMUdata.header & DMP_header_bitmap_Quat6) > 0) {
+          // Q0 value is computed from this equation: Q0^2 + Q1^2 + Q2^2 + Q3^2 = 1.
+          // In case of drift, the sum will not add to 1, therefore, quaternion data need to be corrected with right bias values.
+          // The quaternion data is scaled by 2^30.
 
-            // Calculate display pitch and roll
-            displaypitch = data.pitch * 180 / PI;
-            displayroll = data.roll * 180 / PI;
+          //Serial.printf("Quat6 data is: Q1:%ld Q2:%ld Q3:%ld\r\n", data.Quat6.Data.Q1, data.Quat6.Data.Q2, data.Quat6.Data.Q3);
 
-            // Psensor.read();
+          // Scale to +/- 1
+          double q1 = ((double)IMUdata.Quat6.Data.Q1) / 1073741824.0; // Convert to double. Divide by 2^30
+          double q2 = ((double)IMUdata.Quat6.Data.Q2) / 1073741824.0; // Convert to double. Divide by 2^30
+          double q3 = ((double)IMUdata.Quat6.Data.Q3) / 1073741824.0; // Convert to double. Divide by 2^30
 
-            // data.depth = Psensor.depth();
-            // data.pressure = Psensor.pressure();
+          double q0 = sqrt(1.0 - ((q1 * q1) + (q2 * q2) + (q3 * q3)));
 
-            // data.potentiometer = analogRead(SOFT_POT_PIN);
+          double q2sqr = q2 * q2;
 
-            if (xQueueSend(sensorDataQueue, &data, portMAX_DELAY) != pdPASS) {
-                Serial.println("Failed to send data to queue");
-            }
+          // roll (x-axis rotation)
+          double t0 = +2.0 * (q0 * q1 + q2 * q3);
+          double t1 = +1.0 - 2.0 * (q1 * q1 + q2sqr);
+          data.roll = atan2(t0, t1) * 180.0 / PI;
 
-            // Tsensor.read();
+          // pitch (y-axis rotation)
+          double t2 = +2.0 * (q0 * q2 - q3 * q1);
+          t2 = t2 > 1.0 ? 1.0 : t2;
+          t2 = t2 < -1.0 ? -1.0 : t2;
+          data.pitch = asin(t2) * 180.0 / PI;
 
-            // float temperature = Tsensor.temperature(); 
+          // yaw (z-axis rotation)
+          double t3 = +2.0 * (q0 * q3 + q1 * q2);
+          double t4 = +1.0 - 2.0 * (q2sqr + q3 * q3);
+          data.yaw = atan2(t3, t4) * 180.0 / PI;
 
-            // String logData = "Pitch: " + String(data.pitch * 180 / PI) + " degrees, " +
-            //                  "Roll: " + String(data.roll * 180 / PI) + " degrees, ";
-                            //  "Depth: " + String(data.depth) + " m, " +
-                            //  "Pressure: " + String(data.pressure) + " mbar, " +
-                            //  "Temperature: " + String(temperature) + " Celsius";
-                            //  "Current: " + String(current) + " A";
 
-            // writeSD(logData);
+          // Calculate display pitch and roll
+          displaypitch = data.pitch;
+          displayroll = data.roll;
+          displayyaw = data.yaw;
 
-        } else {
-            Serial.println("Sensor data not ready");
+          // Psensor.read();
+
+          // data.depth = Psensor.depth();
+          // data.pressure = Psensor.pressure();
+
+          // data.potentiometer = analogRead(SOFT_POT_PIN);
+
+          if (xQueueSend(sensorDataQueue, &data, portMAX_DELAY) != pdPASS) {
+              Serial.println("Failed to send data to queue");
+          }
+
+          // Tsensor.read();
+
+          // float temperature = Tsensor.temperature(); 
+
+          // String logData = "Pitch: " + String(data.pitch * 180 / PI) + " degrees, " +
+          //                  "Roll: " + String(data.roll * 180 / PI) + " degrees, ";
+                          //  "Depth: " + String(data.depth) + " m, " +
+                          //  "Pressure: " + String(data.pressure) + " mbar, " +
+                          //  "Temperature: " + String(temperature) + " Celsius";
+                          //  "Current: " + String(current) + " A";
+          // writeSD(logData);
         }
-        vTaskDelay(pdMS_TO_TICKS(100)); // Adding a delay to reduce bus congestion and improve stability
+
+    // } else {
+    //     Serial.println("Sensor data not ready");
     }
+    vTaskDelay(pdMS_TO_TICKS(10)); // Adding a delay to reduce bus congestion and improve stability
+  }
 }

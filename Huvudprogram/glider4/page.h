@@ -13,6 +13,8 @@ const char page_html[] PROGMEM = R"rawliteral(
       background-color: #1e1e1e;
       color: #e2e2e2;
       transition: background-color 0.3s, color 0.3s;
+      justify-content: center;
+      align-items: center;
     }
     .header {
       background-color: #333;
@@ -179,7 +181,7 @@ const char page_html[] PROGMEM = R"rawliteral(
     .light-mode th {
       background-color: #e1e1e1;
     }
-   .loading-bar-container {
+    .loading-bar-container {
       width: 100%;
       background-color: #ddd;
       border-radius: 5px;
@@ -189,11 +191,20 @@ const char page_html[] PROGMEM = R"rawliteral(
     .loading-bar {
       height: 30px;
       background-color: #4caf50;
-      width: 0;
+      width: 0; /* Initially 0 width, will be adjusted by JavaScript */
       border-radius: 5px;
       text-align: center;
       color: white;
       line-height: 30px; /* Match the height of the bar */
+      transition: width 0.3s ease; /* Smooth transition on width change */
+    }
+    .loading-bar-text {
+      position: relative;
+      z-index: 1;
+      color: white;
+      text-align: center;
+      line-height: 30px; /* Match the height of the bar */
+      font-weight: bold;
     }
   </style>
 </head>
@@ -202,6 +213,7 @@ const char page_html[] PROGMEM = R"rawliteral(
     <h1>SEAGUL</h1>
     <button class="mode-toggle" onclick="toggleMode()">Light Mode</button>
   </div>
+
   <div class="container">
     <div class="status-card">
       <h2>Current State</h2>
@@ -222,6 +234,7 @@ const char page_html[] PROGMEM = R"rawliteral(
         </tr>
       </table>
     </div>
+
     <div class="status-card">
       <h2>Orientation Data</h2>
       <table class="fixed-table">
@@ -237,6 +250,7 @@ const char page_html[] PROGMEM = R"rawliteral(
         </tr>
       </table>
     </div>
+
     <div class="status-card">
       <h2>Navigation</h2>      
       <table class="fixed-table">
@@ -250,30 +264,20 @@ const char page_html[] PROGMEM = R"rawliteral(
         </tr>
       </table>
     </div>
-    <div class="control-card">
-      <h2>Controls</h2>
-      <div class="button-container">
-        <button class="button idle-button" onclick="sendMessage('Idle')">Idle</button>
-        <button class="button initiate-dive" onclick="sendMessage('Initiate Dive')">Initiate Dive</button>
-        <button class="button calibrate" onclick="sendMessage('Calibrate')">Calibrate</button>
-      </div>
-      <div class="button-container">
-        <button class="button test-button" onclick="sendMessage('Test 1')">Test 1</button>
-        <button class="button test-button" onclick="sendMessage('Test 2')">Test 2</button>
-        <button class="button test-button" onclick="sendMessage('Test 3')">Test 3</button>
-        <button class="button test-button" onclick="sendMessage('Test 4')">Test 4</button>
-      </div>
-      <div class="button-container">
-        <button class="button test-button" onclick="sendMessage('Test 5')">Test 5</button>
-        <button class="button test-button" onclick="sendMessage('Test 6')">Test 6</button>
-        <button class="button test-button" onclick="sendMessage('Test 7')">Test 7</button>
-        <button class="button test-button" onclick="sendMessage('Test 8')">Test 8</button>
+
+    <div class="status-card">
+      <h2>Soft Potentiometer ADC Value</h2>
+      <div class="loading-bar-container">
+        <div class="loading-bar" id="loadingBar"></div>
+        <div class="loading-bar-text" id="loadingBarText">0%</div>
       </div>
     </div>
+
     <div class="status-card">
       <h2>Battery Voltage</h2>
       <p id="batteryVoltage"></p>
     </div>
+
     <div class="status-card">
       <h2>Internal Conditions</h2>
       <table class="fixed-table">
@@ -289,14 +293,31 @@ const char page_html[] PROGMEM = R"rawliteral(
         </tr>
       </table>
     </div>
+
     <div class="status-card">
       <h2>Device Signal Strengths</h2>
       <div id="deviceStrengths"></div>
     </div>
-    <div class="status-card">
-      <h2>Soft Potentiometer ADC Value</h2>
-      <div class="loading-bar-container">
-        <div class="loading-bar" id="adcValueLoadingBar">0%</div>
+  <!-- </div> Close the container div here -->
+
+    <div class="control-card">
+      <h2>Controls</h2>
+      <div class="button-container">
+        <button class="button idle-button" onclick="sendMessage('Idle')">Idle</button>
+        <button class="button initiate-dive" onclick="initiateDive()">Initiate Dive</button>
+        <button class="button calibrate" onclick="sendMessage('Calibrate')">Calibrate</button>
+      </div>
+      <div class="button-container">
+        <button class="button test-button" onclick="sendMessage('Test 1')">Test 1</button>
+        <button class="button test-button" onclick="sendMessage('Test 2')">Test 2</button>
+        <button class="button test-button" onclick="sendMessage('Test 3')">Test 3</button>
+        <button class="button test-button" onclick="sendMessage('Test 4')">Test 4</button>
+      </div>  
+      <div class="button-container">
+        <button class="button test-button" onclick="sendMessage('Test 5')">Test 5</button>
+        <button class="button test-button" onclick="sendMessage('Test 6')">Test 6</button>
+        <button class="button test-button" onclick="sendMessage('Test 7')">Test 7</button>
+        <button class="button test-button" onclick="sendMessage('Test 8')">Test 8</button>
       </div>
     </div>
   </div>
@@ -330,10 +351,11 @@ const char page_html[] PROGMEM = R"rawliteral(
         document.getElementById('internalHumidity').innerText = data.internalHumidity + " %";
 
         const adcValue = data.adcValue;
-        const percentage = (adcValue / 4095) * 100; // Assuming a 10-bit ADC (0-4095)
+        const percentage = (adcValue / 4095) * 100; // Calculate percentage
         const loadingBar = document.getElementById('loadingBar');
-        loadingBar.style.width = percentage + '%';
-        loadingBar.textContent = Math.round(percentage) + '%';
+        const loadingBarText = document.getElementById('loadingBarText');
+        loadingBar.style.width = percentage + '%'; // Set the width of the loading bar
+        loadingBarText.textContent = Math.round(percentage) + '%'; // Update the text percentage
       });
     }
 
@@ -341,6 +363,13 @@ const char page_html[] PROGMEM = R"rawliteral(
       var xhr = new XMLHttpRequest();
       xhr.open("GET", "/update?state=" + msg, true);
       xhr.send();
+    }
+  
+    function initiateDive() {
+      sendMessage('Initiate Dive');
+      setTimeout(() => {
+        sendMessage('Diving');
+      }, 1000); // 1 second delay
     }
 
     function toggleMode() {

@@ -45,7 +45,10 @@
 DRV8825 transtepper(stepsPerRevolution, TRAN_DIR_PIN, TRAN_STEP_PIN, TRAN_SLEEP_PIN, MODE0, MODE1, MODE2);
 DRV8825 rotstepper(stepsPerRevolution, ROT_DIR_PIN, ROT_STEP_PIN, ROT_SLEEP_PIN, MODE0, MODE1, MODE2);
 
-#define SOFT_POT_PIN 4 // Pin connected to softpot wiper
+#define SOFT_POT_PIN 2 // Pin connected to softpot wiper
+#define PUMP_PIN 5
+#define VALVE_PIN 6
+#define DROPWEIGHT_PIN 4
 
 const int GRAPH_LENGTH = 40; // Length of line graph
 
@@ -54,12 +57,15 @@ bool glideDown = false;
 bool transmit = true;
 float n_dyk = 0;
 
+bool dropweight = false;
+
 bool isIdle = false;
 bool isDiving = false;
 bool isCalibrating = false;
 
 float displaypitch = 0;
 float displayroll = 0;
+float displayyaw = 0;
 float displaypressure = 0;
 float displaytemperature = 0;
 float displaypotentiometer = 0;
@@ -67,6 +73,7 @@ float displaypotentiometer = 0;
 struct SensorData {
     float pitch;
     float roll;
+    float yaw;
     float depth;
     float pressure;
     float potentiometer;
@@ -86,8 +93,8 @@ OpenLog myLog;
 String fileName = "SD-test10_240612.txt";
 
 void openLogSetup();
-void moveRotationMotor();
-void moveTranslationMotor();
+void moveRotationMotor(SensorData receivedData, float &currentDegree, float &rollSP, bool &rotationmotorRunning);
+void moveTranslationMotor(SensorData receivedData, float &currentPosition, float &pitchSP, bool translationmotorRunning);
 void steppermotor(void* pvParameters);
 void datagathering(void* pvParameters);
 
@@ -144,6 +151,10 @@ void handleInitiateDive() {
   isCalibrating = false;
   Serial.println("Dive Initiated");
   server.send(200, "text/plain", "Dive Initiated");
+
+  delay(1000);
+  currentState = "Diving";
+  Serial.println("Diving");
 }
 
 void handleCalibrate() {
@@ -192,7 +203,7 @@ void handleData() {
   json += "\"salinity\":" + String(randomFloat(30.0, 50.0)) + ",";
   json += "\"pitch\":" + String(displaypitch) + ",";
   json += "\"roll\":" + String(displayroll) + ",";
-  json += "\"yaw\":" + String(randomFloat(-360.0, 360.0)) + ",";
+  json += "\"yaw\":" + String(displayyaw) + ",";
   json += "\"batteryVoltage\":" + String(randomFloat(22.0, 38.5)) + ",";
   json += "\"compassCourse\":" + String(randomFloat(0.0, 360.0)) + ",";
   json += "\"gnssCoordinates\":\"" + String(randomFloat(-90.0, 90.0), 6) + ", " + String(randomFloat(-180.0, 180.0), 6) + "\",";
@@ -219,6 +230,9 @@ void setup() {
 
     pinMode(SOFT_POT_PIN, INPUT);
 
+    pinMode(PUMP_PIN, OUTPUT);
+    pinMode(VALVE_PIN, OUTPUT);
+
     Wire.begin(SDA_PIN, SCL_PIN);
     Wire.setClock(400000);
 
@@ -233,6 +247,29 @@ void setup() {
         } else {
             initialized = true;
         }
+    }
+    Serial.println("Device connected!");
+
+    bool success = true;
+    success &= (myICM.initializeDMP() == ICM_20948_Stat_Ok);
+    success &= (myICM.enableDMPSensor(INV_ICM20948_SENSOR_GAME_ROTATION_VECTOR) == ICM_20948_Stat_Ok);
+    // success &= (myICM.setDMPODRrate(DMP_ODR_Reg_Quat6, 0) == ICM_20948_Stat_Ok);
+        // Enable the FIFO
+    success &= (myICM.enableFIFO() == ICM_20948_Stat_Ok);
+
+    // Enable the DMP
+    success &= (myICM.enableDMP() == ICM_20948_Stat_Ok);
+
+    // Reset DMP
+    success &= (myICM.resetDMP() == ICM_20948_Stat_Ok);
+
+    // Reset FIFO
+    success &= (myICM.resetFIFO() == ICM_20948_Stat_Ok);
+
+    if (success) {
+        Serial.println("DMP configuration successful");
+    } else {
+        Serial.println("DMP configuration failed");
     }
 
     Psensor.init();
@@ -250,7 +287,6 @@ void setup() {
         Serial.println("TSYS01 device failed to initialize!");
         delay(1000);
     }
-
 
     openLogSetup();
 
@@ -408,7 +444,9 @@ void steppermotor(void* pvParameters) {
     float currentDegree = 0;
     float pitchSP = 0;
     float rollSP = 0;
-    // float n_dyk = 0;
+    unsigned long glideDownStartTime = 0;
+    unsigned long glideUpStartTime = 0;
+    const unsigned long ONE_HOUR = 3600000; // 1 hour in milliseconds
     SensorData receivedData;
 
     while (true) {
@@ -421,19 +459,29 @@ void steppermotor(void* pvParameters) {
                 moveTranslationMotor(receivedData, currentPosition, pitchSP, translationmotorRunning);
                 moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
 
-
-                bool klartecken = false;
-
-                if (!klartecken) { //Simulera väntan på klartecken från land
-                    delay(30000);
-                    klartecken = true;
-                    Serial.println("Klartecken givet, dyker");
+                if (isDiving == true) {
+                    Serial.println("Initierar dyk");
+                    Serial.println("");
+                    delay(1000);
                     n_dyk = 0;
                     glideDown = true;
                     transmit = false;
                     Serial.println("Går in i dykläge");
                     Serial.println("");
                 }
+
+                // bool klartecken = false;
+
+                // if (!klartecken) { //Simulera väntan på klartecken från land
+                //     delay(30000);
+                //     klartecken = true;
+                //     Serial.println("Klartecken givet, dyker");
+                //     n_dyk = 0;
+                //     glideDown = true;
+                //     transmit = false;
+                //     Serial.println("Går in i dykläge");
+                //     Serial.println("");
+                // }
             }
 
             if (glideDown == true) {
@@ -442,46 +490,68 @@ void steppermotor(void* pvParameters) {
 
                 if (!glideDownInitialized) {
                     Serial.println("Öppnar magnetventil...");
+                    glideDownStartTime = millis();
+                    digitalWrite(VALVE_PIN, HIGH);
                     delay(10000);
-                    Serial.println("Bälg fylld, stänger magnetventil...");
-                    delay(2000);
-                    Serial.println("Reglerar pitch- och rollvinkel");
-                    Serial.println("");
 
-                    glideDownInitialized = true;
+                    if (receivedData.potentiometer >= 3500) {
+                        Serial.println("Bälg fylld, stänger magnetventil...");
+                        digitalWrite(VALVE_PIN, LOW);
+                        glideDownInitialized = true;
+                    }
+
+                    // delay(2000);
+                    // Serial.println("Reglerar pitch- och rollvinkel");
+                    // Serial.println("");
+                    // glideDownInitialized = true;
                 }
 
                 moveTranslationMotor(receivedData, currentPosition, pitchSP, translationmotorRunning);
                 moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
 
-                if (receivedData.potentiometer > 3500) {
+                if (receivedData.depth > 90) {
                     Serial.println("Maxdjup uppnåt, initierar uppstigning");
                     Serial.println("");
                     glideDown = false;
                     glideUp = true;
-                }   
+                }  
+
+                if (receivedData.depth > 110) {
+                    Serial.println("Djupare än 110m, släpper dropweight");
+                    dropweight = true;
+                }
+
+                if (glideDown && millis() - glideDownStartTime >= ONE_HOUR) {
+                    Serial.println("En timme har passerat, släpper dropweight");
+                    Serial.println("");
+                    dropweight = true;
+                }
             }
 
             if (glideUp == true) {
                 pitchSP = 20;
                 rollSP = 0;
 
-
                 if (!glideUpInitialized) {
                     Serial.print("Startar pump...");
                     delay(20000);
-                    Serial.println("Blåsa fylld, stänger av pump.");
+                    digitalWrite(PUMP_PIN, HIGH);
+                    if (receivedData.potentiometer <= 1800) {
+                        Serial.println("Blåsa fylld, stänger av pump.");
+                        digitalWrite(PUMP_PIN, LOW);
+                        glideUpInitialized = true;
+                    }
                     delay(2000);
                     Serial.println("Reglerar pitch- och rollvinkel");
                     Serial.println("");
 
-                    glideUpInitialized = true;
+                    // glideUpInitialized = true;
                 }
 
                 moveTranslationMotor(receivedData, currentPosition, pitchSP, translationmotorRunning);
                 moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
 
-                if (receivedData.potentiometer < 2000) {
+                if (receivedData.depth < 5) {
                     
                     if (!dykcount) {
                         n_dyk += 1;
@@ -503,9 +573,17 @@ void steppermotor(void* pvParameters) {
                         Serial.println("");
                     }
                 }
+
+                if (glideUp && millis() - glideUpStartTime >= ONE_HOUR) {
+                    Serial.println("En timme har passerat, släpper dropweight");
+                    Serial.println("");
+                    dropweight = true;
+                }
             }
 
-
+            if (dropweight == true) {
+                digitalWrite(DROPWEIGHT_PIN, HIGH);
+            }
 
             // moveTranslationMotor(receivedData, currentPosition, pitchSP, translationmotorRunning);
             // moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
@@ -524,17 +602,48 @@ void steppermotor(void* pvParameters) {
 }
 
 void datagathering(void* pvParameters) {
-
     while (true) {
-        if (myICM.dataReady()) {
+        icm_20948_DMP_data_t IMUdata;
+        myICM.readDMPdataFromFIFO(&IMUdata);
+        if ((myICM.status == ICM_20948_Stat_Ok) || (myICM.status == ICM_20948_Stat_FIFOMoreDataAvail)) {
             SensorData data;
-            myICM.getAGMT(); // The values are only updated when you call 'getAGMT'
+            // myICM.getAGMT(); // The values are only updated when you call 'getAGMT'
+            if ((IMUdata.header & DMP_header_bitmap_Quat6) > 0) {
+            // Q0 value is computed from this equation: Q0^2 + Q1^2 + Q2^2 + Q3^2 = 1.
+            // In case of drift, the sum will not add to 1, therefore, quaternion data need to be corrected with right bias values.
+            // The quaternion data is scaled by 2^30.
 
-            // Calculate pitch and roll
-            data.pitch = atan2(myICM.accY(), sqrt(myICM.accX() * myICM.accX() + myICM.accZ() * myICM.accZ()));
-            data.roll = -atan2(-myICM.accX(), myICM.accZ());
-            displaypitch = data.pitch * 180 / PI;
-            displayroll = data.roll * 180 / PI;
+            //Serial.printf("Quat6 data is: Q1:%ld Q2:%ld Q3:%ld\r\n", data.Quat6.Data.Q1, data.Quat6.Data.Q2, data.Quat6.Data.Q3);
+
+            // Scale to +/- 1
+            double q1 = ((double)IMUdata.Quat6.Data.Q1) / 1073741824.0; // Convert to double. Divide by 2^30
+            double q2 = ((double)IMUdata.Quat6.Data.Q2) / 1073741824.0; // Convert to double. Divide by 2^30
+            double q3 = ((double)IMUdata.Quat6.Data.Q3) / 1073741824.0; // Convert to double. Divide by 2^30
+
+            double q0 = sqrt(1.0 - ((q1 * q1) + (q2 * q2) + (q3 * q3)));
+
+            double q2sqr = q2 * q2;
+
+            // roll (x-axis rotation)
+            double t0 = +2.0 * (q0 * q1 + q2 * q3);
+            double t1 = +1.0 - 2.0 * (q1 * q1 + q2sqr);
+            data.roll = atan2(t0, t1) * 180.0 / PI;
+
+            // pitch (y-axis rotation)
+            double t2 = +2.0 * (q0 * q2 - q3 * q1);
+            t2 = t2 > 1.0 ? 1.0 : t2;
+            t2 = t2 < -1.0 ? -1.0 : t2;
+            data.pitch = asin(t2) * 180.0 / PI;
+
+            // yaw (z-axis rotation)
+            double t3 = +2.0 * (q0 * q3 + q1 * q2);
+            double t4 = +1.0 - 2.0 * (q2sqr + q3 * q3);
+            data.yaw = atan2(t3, t4) * 180.0 / PI;
+
+            // Calculate display pitch and roll
+            displaypitch = data.pitch;
+            displayroll = data.roll;
+            displayyaw = data.yaw;
 
             Psensor.read();
             data.depth = Psensor.depth();
@@ -552,17 +661,20 @@ void datagathering(void* pvParameters) {
                 Serial.println("Failed to send data to queue");
             }
 
-            String logData = "Pitch: " + String(data.pitch * 180 / PI) + " degrees, " +
-                             "Roll: " + String(data.roll * 180 / PI) + " degrees, ";
-                            //  "Depth: " + String(data.depth) + " m, " +
-                            //  "Pressure: " + String(data.pressure) + " mbar, " +
-                            //  "Temperature: " + String(temperature) + " Celsius";
+            String logData = "Pitch: " + String(data.pitch) + " degrees, " +
+                             "Roll: " + String(data.roll) + " degrees, " +
+                             "Yaw: " + String(data.yaw) + " degrees, " +
+                             "Depth: " + String(data.depth) + " m, " +
+                             "Pressure: " + String(data.pressure) + " mbar, " +
+                             "Temperature: " + String(data.temperature) + " Celsius";
                             //  "Current: " + String(current) + " A";
-
             writeSD(logData);
 
-        } else {
-            Serial.println("Sensor data not ready");
+
+            } else {
+                Serial.println("Sensor data not ready");
+            }
+        
         }
         vTaskDelay(pdMS_TO_TICKS(100)); // Adding a delay to reduce bus congestion and improve stability
     }
