@@ -4,7 +4,6 @@ This is custum code that is to a great degree inpired by the exaplecode that can
 To run the code select the board RedBoard Artemis ATP and the correct COM. The board can be found here: https://raw.githubusercontent.com/sparkfun/Arduino_Apollo3/main/package_sparkfun_apollo3_index.json 
 Simply add the apollo3 package URL under preferences in the addisional boards manager URL field.
 
-Created by Oskar Jacobsen 
 Last updated 2024-07-02
 
 The purpouse of this code is to be able to use usefull functions of the ATG and be able to communicate with another microcontroller, ESP32-S3.
