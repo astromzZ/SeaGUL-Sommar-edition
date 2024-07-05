@@ -56,6 +56,7 @@ DRV8825 rotstepper(stepsPerRevolution, ROT_DIR_PIN, ROT_STEP_PIN, ROT_SLEEP_PIN,
 
 //Keep track of the number of dives the glider has done
 int n_dyk = 0;
+long totalNumberofDives = 0; // Total number of dives the glider has done since the start of the program
 
 //Flag to check if the dropweight has been released
 bool dropweight = false;
@@ -710,7 +711,6 @@ void glidercontrol(void* pvParameters) {
             // 
             
 
-
             switch (gliderState) { //Not sure if this should be outside xQueueReceive or not.
 
                 case Idle: //This case is for when the glider is not doing anything. Activated via button on SeaGUL webpage.
@@ -813,7 +813,7 @@ void glidercontrol(void* pvParameters) {
                         Serial.println("Opening valve and recording time");
                         digitalWrite(VALVE_PIN, HIGH);
 
-                        if (receivedData.potentiometer >= 3500) { //When the reservoir is full we close the valve.
+                        if (receivedData.potentiometer >= 3500) { //When the reservoir is full we close the valve. Value is not determined yet.
                             Serial.println("Reservoir full, closing valve.");
                             digitalWrite(VALVE_PIN, LOW);
                             glideDownReservoirFull = true; 
@@ -892,7 +892,7 @@ void glidercontrol(void* pvParameters) {
                         Serial.println("Starting pump and recording time");
                         digitalWrite(PUMP_PIN, HIGH);
 
-                        if (receivedData.potentiometer <= 500) {
+                        if (receivedData.potentiometer <= 500) { //When the reservoir is empty we stop the pump. Value is not determined yet.
                             Serial.println("Reservoir empty, stopping pump.");
                             digitalWrite(PUMP_PIN, LOW);
                             glideUpReservoirEmpty = true;
@@ -916,6 +916,7 @@ void glidercontrol(void* pvParameters) {
                             //Since a dive is complete we add 1 to the number of dives.
                             if (!dykcount) {
                                 n_dyk += 1;
+                                totalNumberofDives += 1;
                                 dykcount = true; 
                             }
 
