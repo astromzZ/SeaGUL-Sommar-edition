@@ -126,12 +126,12 @@ void loop() {}
 
 void printRawAGMT(ICM_20948_AGMT_t agmt)
 {
-  SERIAL_PORT.print(agmt.acc.axes.x);
-  SERIAL_PORT.print(", ");
-  SERIAL_PORT.print(agmt.acc.axes.y);
-  SERIAL_PORT.print(", ");
-  SERIAL_PORT.print(agmt.acc.axes.z);
-  SERIAL_PORT.print(", ");
+//   SERIAL_PORT.print(agmt.acc.axes.x);
+//   SERIAL_PORT.print(", ");
+//   SERIAL_PORT.print(agmt.acc.axes.y);
+//   SERIAL_PORT.print(", ");
+//   SERIAL_PORT.print(agmt.acc.axes.z);
+//   SERIAL_PORT.print(", ");
 
   SERIAL_PORT.print(agmt.mag.axes.x);
   SERIAL_PORT.print(", ");
