@@ -5,6 +5,7 @@
 #include <ICM_20948.h>
 #include <pgmspace.h>
 
+
 // Network credentials
 const char* ssid = "SEAGUL";
 const char* password = "0123456789";
@@ -23,32 +24,6 @@ String currentState = "Idle";
 #define SDA_PIN 13
 #define SCL_PIN 14
 #define AD0_VAL 1
-
-#define RPM 186
-#define stepsPerRevolution 200
-#define STEPS_PER_CM 600
-#define STEPS_PER_DEGREE 10 //Ta reda på detta värde
-
-#define TRAN_DIR_PIN 17 //Tidigare 9
-#define TRAN_STEP_PIN 16 //Tidigare 46
-#define TRAN_SLEEP_PIN 15 //Tidigare 3
-#define ROT_DIR_PIN 9
-#define ROT_STEP_PIN 8
-#define ROT_SLEEP_PIN 18
-#define TRANSLATION_MIN_POSITION_CM -1
-#define TRANSLATION_MAX_POSITION_CM 1
-#define TRANSLATIONMOTOR_STEP_SIZE 10
-#define ROTATION_MIN_DEGREE -90
-#define ROTATION_MAX_DEGREE 90
-#define ROTATIONMOTOR_STEP_SIZE 1
-#define MICROSTEP 1
-
-#include "DRV8825.h"
-#define MODE0 10
-#define MODE1 11
-#define MODE2 12
-DRV8825 transtepper(stepsPerRevolution, TRAN_DIR_PIN, TRAN_STEP_PIN, TRAN_SLEEP_PIN, MODE0, MODE1, MODE2);
-DRV8825 rotstepper(stepsPerRevolution, ROT_DIR_PIN, ROT_STEP_PIN, ROT_SLEEP_PIN, MODE0, MODE1, MODE2);
 
 struct SensorData {
     float pitch;
@@ -70,11 +45,6 @@ enum StepperState {
 
 StepperState gliderState = Idle;
 
-bool translationmotorRunning = false;
-float transl_direction = 1;
-float nextPosition;
-float nextDegree;
-
 float displaypitch = 0;
 float displayroll = 0;
 float displayyaw = 0;
@@ -91,12 +61,15 @@ bool movingBackward = false;
 ICM_20948_I2C myICM;
 QueueHandle_t sensorDataQueue;
 
+int adcValue = 0;
+bool pumpState = false; // false = off, true = on
+bool ventState = false; // false = closed, true = open
+String errorMessage = "";
+bool errorMessageSent = false;
+
 void steppermotor(void* pvParameters);
 void datagathering(void* pvParameters);
-void controlTranslationMotor(float &translation_direction, float &currentPosition, bool translationmotorRunning);
-void controlRotationMotor(float &rotation_direction, float &currentDegree, bool rotationmotorRunning);
-void moveRotationMotor(SensorData receivedData, float &currentDegree, float &rollSP, bool &rotationmotorRunning);
-void moveTranslationMotor(SensorData receivedData, float &currentPosition, float &pitchSP, bool translationmotorRunning);
+
 
 // Handle root path
 void handleRoot() {
@@ -114,6 +87,11 @@ void handleUpdate() {
   } else {
     server.send(400, "text/plain", "Bad Request");
   }
+}
+
+void handleErrorMessage() {
+    server.send(200, "text/plain", errorMessage); // Serve the captured error message
+    errorMessage = ""; // Clear the error message after serving once
 }
 
 void handleIdle() {
@@ -203,6 +181,45 @@ void handleStopMoveBackward() {
   server.send(200, "text/plain", "Move Backward stopped");
 }
 
+void handleSetADCValue() {
+  if (server.hasArg("value")) {
+    adcValue = server.arg("value").toInt();
+    Serial.print("ADC Value updated to: ");
+    Serial.println(adcValue);
+    server.send(200, "text/plain", "OK");
+  } else {
+    server.send(400, "text/plain", "Bad Request");
+  }
+}
+
+void handleTogglePump() {
+  if (server.hasArg("state")) {
+    String state = server.arg("state");
+    if (state == "on") {
+      pumpState = true;
+    } else if (state == "off") {
+      pumpState = false;
+    }
+    server.send(200, "text/plain", "Pump state: " + state);
+  } else {
+    server.send(400, "text/plain", "Bad Request");
+  }
+}
+
+void handleToggleVent() {
+  if (server.hasArg("state")) {
+    String state = server.arg("state");
+    if (state == "open") {
+      ventState = true;
+    } else if (state == "closed") {
+      ventState = false;
+    }
+    server.send(200, "text/plain", "Pump state: " + state);
+  } else {
+    server.send(400, "text/plain", "Bad Request");
+  }
+}
+
 // Function to generate random number
 float randomFloat(float minValue, float maxValue) {
   return minValue + (float)rand() / ((float)RAND_MAX / (maxValue - minValue));
@@ -256,11 +273,6 @@ void handleData() {
 // Setup function
 void setup() {
   Serial.begin(115200);
-
-  transtepper.begin(RPM);
-  transtepper.enable();
-  pinMode(TRAN_SLEEP_PIN, OUTPUT);
-  pinMode(TRAN_DIR_PIN, OUTPUT);
 
   Wire.begin(SDA_PIN, SCL_PIN);
   Wire.setClock(400000);
@@ -346,6 +358,10 @@ void setup() {
   server.on("/stopRotateRight", handleStopRotateRight);
   server.on("/stopMoveForward", handleStopMoveForward);
   server.on("/stopMoveBackward", handleStopMoveBackward);
+  server.on("/setADCValue", handleSetADCValue);  // Add this line
+  server.on("/togglePump", handleTogglePump);
+  server.on("/toggleVent", handleToggleVent);
+  server.on("/errorMessage", handleErrorMessage);
   
   server.begin();
   Serial.println("HTTP server started");
@@ -354,175 +370,6 @@ void setup() {
 // Loop function
 void loop() {
   server.handleClient();
-}
-
-void moveRotationMotor (SensorData receivedData, float &currentDegree, float &rollSP, bool &rotationmotorRunning) {
-    float roll_error = rollSP - (receivedData.roll);
-    int rot_direction = (roll_error < 0) ? 1 : -1;
-    float nextDegree = currentDegree + rot_direction * (ROTATIONMOTOR_STEP_SIZE / (float)STEPS_PER_DEGREE);
-
-    if (fabs(roll_error) > 5) {
-        if (!rotationmotorRunning) {
-            digitalWrite(ROT_SLEEP_PIN, HIGH);
-            rotationmotorRunning = true;
-        }
-
-        if (nextDegree < ROTATION_MAX_DEGREE && nextDegree > ROTATION_MIN_DEGREE) {
-            rotstepper.setMicrostep(1);
-            rotstepper.move(rot_direction > 0 ? ROTATIONMOTOR_STEP_SIZE : -ROTATIONMOTOR_STEP_SIZE);
-            currentDegree = nextDegree;
-        } else {
-            if (!rotationmotorRunning) {
-                digitalWrite(ROT_SLEEP_PIN, HIGH);
-                rotationmotorRunning = true;
-            }
-
-            if ((rot_direction > 0 && currentDegree >= ROTATION_MAX_DEGREE) || (rot_direction < 0 && currentDegree <= ROTATION_MIN_DEGREE)) {
-                rotstepper.setMicrostep(1);
-                rotstepper.move(rot_direction > 0 ? ROTATIONMOTOR_STEP_SIZE : -ROTATIONMOTOR_STEP_SIZE);
-                currentDegree = nextDegree;
-            }
-        }
-    } else {
-        if (rotationmotorRunning) {
-            digitalWrite(ROT_SLEEP_PIN, LOW);
-            rotationmotorRunning = false;
-        }
-    }
-}
-
-void moveTranslationMotor (SensorData receivedData, float &currentPosition, float &pitchSP, bool translationmotorRunning) {
-    //Translation motor
-    float pitch_error = pitchSP - (receivedData.pitch);
-    int transl_direction = (pitch_error < 0) ? 1 : -1;
-    float nextPosition = currentPosition + transl_direction * (TRANSLATIONMOTOR_STEP_SIZE / (float)STEPS_PER_CM);
-
-   if (fabs(pitch_error) > 5) {
-        if (!translationmotorRunning) {
-            digitalWrite(TRAN_SLEEP_PIN, HIGH);
-            translationmotorRunning = true;
-        }
-
-        if (nextPosition < TRANSLATION_MAX_POSITION_CM && nextPosition > TRANSLATION_MIN_POSITION_CM) {
-            transtepper.setMicrostep(2);
-            transtepper.move(transl_direction > 0 ? TRANSLATIONMOTOR_STEP_SIZE : -TRANSLATIONMOTOR_STEP_SIZE);
-            currentPosition = nextPosition;
-        } else {
-            if (!translationmotorRunning) {
-                digitalWrite(TRAN_SLEEP_PIN, HIGH);
-                translationmotorRunning = true;
-            }
-
-            if ((transl_direction > 0 && currentPosition >= TRANSLATION_MAX_POSITION_CM) || (transl_direction < 0 && currentPosition <= TRANSLATION_MIN_POSITION_CM)) {
-                transtepper.setMicrostep(2);
-                transtepper.move(transl_direction > 0 ? TRANSLATIONMOTOR_STEP_SIZE : -TRANSLATIONMOTOR_STEP_SIZE);
-                currentPosition = nextPosition;
-            }
-        }
-    } else {
-        if (translationmotorRunning) {
-            digitalWrite(TRAN_SLEEP_PIN, LOW);
-            translationmotorRunning = false;
-        }
-    }
-}
-
-void controlRotationMotor (float &rotation_direction, float &currentDegree, bool rotationmotorRunning) {
-    nextDegree = currentDegree + rotation_direction * (ROTATIONMOTOR_STEP_SIZE / (float)STEPS_PER_DEGREE);
-
-    if (rotation_direction > 0) {
-        if (nextDegree < ROTATION_MAX_DEGREE && nextDegree > ROTATION_MAX_DEGREE) {
-            rotstepper.setMicrostep(MICROSTEP);
-            rotstepper.move(ROTATIONMOTOR_STEP_SIZE);
-            currentDegree = nextDegree;
-            Serial.println(currentDegree);
-            
-        } else {
-            if (!rotationmotorRunning) {
-                digitalWrite(ROT_SLEEP_PIN, HIGH);
-                rotationmotorRunning = true;
-            }
-
-            if ((rotation_direction > 0 && currentDegree >= ROTATION_MIN_DEGREE)) {
-                rotstepper.setMicrostep(MICROSTEP);
-                rotstepper.move(ROTATIONMOTOR_STEP_SIZE);
-                currentDegree = nextDegree;
-                Serial.println(currentDegree);
-            }
-
-        }    
-    }
-
-    if (rotation_direction < 0) {
-
-        if (nextDegree < ROTATION_MAX_DEGREE && nextDegree > ROTATION_MAX_DEGREE) {
-            rotstepper.setMicrostep(MICROSTEP);
-            rotstepper.move(-ROTATIONMOTOR_STEP_SIZE);
-            currentDegree = nextDegree;
-            Serial.println(currentDegree);
-
-        } else {
-
-            if (!rotationmotorRunning) {
-                digitalWrite(ROT_SLEEP_PIN, HIGH);
-                rotationmotorRunning = true;
-            }
-
-            if ((rotation_direction < 0 && currentDegree <= ROTATION_MIN_DEGREE)) {
-                rotstepper.setMicrostep(MICROSTEP);
-                rotstepper.move(-ROTATIONMOTOR_STEP_SIZE);
-                currentDegree = nextDegree;
-                Serial.println(currentDegree);
-            }   
-
-        }
-    }
-}
-
-void controlTranslationMotor (float &translation_direction, float &currentPosition, bool translationmotorRunning) {
-  nextPosition = currentPosition + translation_direction * (TRANSLATIONMOTOR_STEP_SIZE / (float)STEPS_PER_CM);
-    if (transl_direction > 0) {
-        if (nextPosition < TRANSLATION_MAX_POSITION_CM && nextPosition > TRANSLATION_MIN_POSITION_CM) {
-            transtepper.setMicrostep(MICROSTEP);
-            transtepper.move(TRANSLATIONMOTOR_STEP_SIZE);
-            currentPosition = nextPosition;
-            Serial.println(currentPosition);
-        } else {
-            if (!translationmotorRunning) {
-                digitalWrite(TRAN_SLEEP_PIN, HIGH);
-                translationmotorRunning = true;
-            }
-
-            if ((transl_direction > 0 && currentPosition >= TRANSLATION_MIN_POSITION_CM)) {
-                transtepper.setMicrostep(MICROSTEP);
-                transtepper.move(TRANSLATIONMOTOR_STEP_SIZE);
-                currentPosition = nextPosition;
-                Serial.println(currentPosition);
-            }
-        }
-    }
-
-    if (transl_direction < 0) {
-
-        if (nextPosition < TRANSLATION_MAX_POSITION_CM && nextPosition > TRANSLATION_MIN_POSITION_CM) {
-            transtepper.setMicrostep(MICROSTEP);
-            transtepper.move(-TRANSLATIONMOTOR_STEP_SIZE);
-            currentPosition = nextPosition;
-            Serial.println(currentPosition);
-        } else {
-            if (!translationmotorRunning) {
-                digitalWrite(TRAN_SLEEP_PIN, HIGH);
-                translationmotorRunning = true;
-            }
-
-            if ((transl_direction < 0 && currentPosition <= TRANSLATION_MIN_POSITION_CM)) {
-                transtepper.setMicrostep(MICROSTEP);
-                transtepper.move(-TRANSLATIONMOTOR_STEP_SIZE);
-                currentPosition = nextPosition;
-                Serial.println(currentPosition);
-            }
-        }
-    }
 }
 
 void steppermotor(void* pvParameters) {
@@ -534,100 +381,26 @@ void steppermotor(void* pvParameters) {
     SensorData receivedData;
     if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY) == pdTRUE) {
 
-      switch(gliderState) {
+        Serial.print(F("Pump state:"));
+        Serial.println(pumpState);
+        Serial.print(F(" Vent state:"));
+        Serial.println(ventState);
+        Serial.print(F(" Input value:"));
+        Serial.println(adcValue);
 
-        case Idle:
-          if (isIdle) {
-            // Serial.println("Idle");
-
-            // It is now possible to manually move the motors.
-
-            if (movingForward) {
-                transl_direction = 1;
-
-                if (!translationmotorRunning) {
-                    digitalWrite(TRAN_SLEEP_PIN, HIGH);
-                    translationmotorRunning = true;
-                }
-
-                controlTranslationMotor(transl_direction, currentPosition, translationmotorRunning);
+        if (pumpState && ventState) {
+            errorMessage = "Both pump and vent cannot be on at the same time";
+            // Optionally, set a flag to indicate an error was sent to the webpage
+            errorMessageSent = true;
+        } else {
+            // If conditions change and the error was previously sent, mark it as resolved
+            if (errorMessageSent) {
+                errorMessage = "Error resolved"; // Set appropriate resolved message
+                errorMessageSent = false; // Reset flag
             } else {
-                if (translationmotorRunning) {
-                    digitalWrite(TRAN_SLEEP_PIN, LOW);
-                    translationmotorRunning = false;
-                }
+                errorMessage = ""; // No error message
             }
-
-            if (movingBackward) {
-                transl_direction = -1;
-
-                if (!translationmotorRunning) {
-                    digitalWrite(TRAN_SLEEP_PIN, HIGH);
-                    translationmotorRunning = true;
-                }
-
-                controlTranslationMotor(transl_direction, currentPosition, translationmotorRunning);
-
-            } else {
-              if (translationmotorRunning) {
-                  digitalWrite(TRAN_SLEEP_PIN, LOW);
-                  translationmotorRunning = false;
-              }
-            }
-          }
-          
-          break;
-
-
-        case Diving:
-
-          if (isDiving) {
-            float pitchSP = 0;
-
-            Serial.print(F("Roll:"));
-            Serial.print(receivedData.roll, 1);
-            Serial.print(F(" Pitch:"));
-            Serial.print(receivedData.pitch, 1);
-            Serial.print(F(" Yaw:"));
-            Serial.println(receivedData.yaw, 1);
-            Serial.print(F("Current Position:"));
-            Serial.println(currentPosition, 1); 
-
-            moveTranslationMotor(receivedData, currentPosition, pitchSP, translationmotorRunning);
-          }
-
-          break;
-
-        case Calibrating:
-          if (isCalibrating) {
-            Serial.println("Calibrating");
-
-            currentPosition = 0;
-            currentDegree = 0;
-
-            delay(1000);
-
-            Serial.println("Calibration done, going into Idle mode");
-
-            isIdle = true;
-            isCalibrating = false;
-            gliderState = Idle;
-          } 
-
-          break; 
-
-        // case GlidingDown:
-          
-        //     break;
-        
-        // case GlidingUp:
-
-        //     break;
-
-      }
-
-    // Yield to allow other tasks to run
-    vTaskDelay(pdMS_TO_TICKS(100));
+        }
     }
   }
 }

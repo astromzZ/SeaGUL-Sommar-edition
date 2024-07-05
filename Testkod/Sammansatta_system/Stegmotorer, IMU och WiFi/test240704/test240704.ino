@@ -50,14 +50,6 @@ String currentState = "Idle";
 DRV8825 transtepper(stepsPerRevolution, TRAN_DIR_PIN, TRAN_STEP_PIN, TRAN_SLEEP_PIN, MODE0, MODE1, MODE2);
 DRV8825 rotstepper(stepsPerRevolution, ROT_DIR_PIN, ROT_STEP_PIN, ROT_SLEEP_PIN, MODE0, MODE1, MODE2);
 
-struct SensorData {
-    float pitch;
-    float roll;
-    float yaw;
-    // float depth;
-    // float pressure;
-    // float potentiometer;
-};
 
 enum StepperState {
     Idle,
@@ -88,15 +80,16 @@ bool rotatingRight = false;
 bool movingForward = false;
 bool movingBackward = false;
 
+float currentPosition = 0;
+float currentDegree = 0;
+
 ICM_20948_I2C myICM;
-QueueHandle_t sensorDataQueue;
+// QueueHandle_t sensorDataQueue;
 
 void steppermotor(void* pvParameters);
-void datagathering(void* pvParameters);
+// void datagathering(void* pvParameters);
 void controlTranslationMotor(float &translation_direction, float &currentPosition, bool translationmotorRunning);
 void controlRotationMotor(float &rotation_direction, float &currentDegree, bool rotationmotorRunning);
-void moveRotationMotor(SensorData receivedData, float &currentDegree, float &rollSP, bool &rotationmotorRunning);
-void moveTranslationMotor(SensorData receivedData, float &currentPosition, float &pitchSP, bool translationmotorRunning);
 
 // Handle root path
 void handleRoot() {
@@ -261,63 +254,64 @@ void setup() {
   transtepper.enable();
   pinMode(TRAN_SLEEP_PIN, OUTPUT);
   pinMode(TRAN_DIR_PIN, OUTPUT);
+  pinMode(TRAN_STEP_PIN, OUTPUT);
 
   Wire.begin(SDA_PIN, SCL_PIN);
   Wire.setClock(400000);
 
-  bool initialized = false;
-  while (!initialized) {
-      myICM.begin(Wire, AD0_VAL);
-      Serial.print(F("Initialization of the sensor returned: "));
-      Serial.println(myICM.statusString());
-      if (myICM.status != ICM_20948_Stat_Ok) {
-          Serial.println("Trying again...");
-          delay(500);
-      } else {
-          initialized = true;
-      }
-  }
+  // bool initialized = false;
+  // while (!initialized) {
+  //     myICM.begin(Wire, AD0_VAL);
+  //     Serial.print(F("Initialization of the sensor returned: "));
+  //     Serial.println(myICM.statusString());
+  //     if (myICM.status != ICM_20948_Stat_Ok) {
+  //         Serial.println("Trying again...");
+  //         delay(500);
+  //     } else {
+  //         initialized = true;
+  //     }
+  // }
 
-  Serial.println("Device connected!");
+  // Serial.println("Device connected!");
 
-  bool success = true;
-  success &= (myICM.initializeDMP() == ICM_20948_Stat_Ok);
-  success &= (myICM.enableDMPSensor(INV_ICM20948_SENSOR_GAME_ROTATION_VECTOR) == ICM_20948_Stat_Ok);
-  // success &= (myICM.setDMPODRrate(DMP_ODR_Reg_Quat6, 0) == ICM_20948_Stat_Ok);
-    // Enable the FIFO
-  success &= (myICM.enableFIFO() == ICM_20948_Stat_Ok);
+  // bool success = true;
+  // success &= (myICM.initializeDMP() == ICM_20948_Stat_Ok);
+  // success &= (myICM.enableDMPSensor(INV_ICM20948_SENSOR_GAME_ROTATION_VECTOR) == ICM_20948_Stat_Ok);
+  // // success &= (myICM.setDMPODRrate(DMP_ODR_Reg_Quat6, 0) == ICM_20948_Stat_Ok);
+  //   // Enable the FIFO
+  // success &= (myICM.enableFIFO() == ICM_20948_Stat_Ok);
 
-  // Enable the DMP
-  success &= (myICM.enableDMP() == ICM_20948_Stat_Ok);
+  // // Enable the DMP
+  // success &= (myICM.enableDMP() == ICM_20948_Stat_Ok);
 
-  // Reset DMP
-  success &= (myICM.resetDMP() == ICM_20948_Stat_Ok);
+  // // Reset DMP
+  // success &= (myICM.resetDMP() == ICM_20948_Stat_Ok);
 
-  // Reset FIFO
-  success &= (myICM.resetFIFO() == ICM_20948_Stat_Ok);
+  // // Reset FIFO
+  // success &= (myICM.resetFIFO() == ICM_20948_Stat_Ok);
 
-  if (success) {
-      Serial.println("DMP configuration successful");
-  } else {
-      Serial.println("DMP configuration failed");
-  }
+  // if (success) {
+  //     Serial.println("DMP configuration successful");
+  // } else {
+  //     Serial.println("DMP configuration failed");
+  // }
 
 
-  sensorDataQueue = xQueueCreate(10, sizeof(SensorData));
-  if (sensorDataQueue == NULL) {
-      Serial.println("Failed to create queue");
-      return;
-  }
+//   sensorDataQueue = xQueueCreate(10, sizeof(SensorData));
+//   if (sensorDataQueue == NULL) {
+//       Serial.println("Failed to create queue");
+//       return;
+//   }
 
-  xTaskCreatePinnedToCore(
-      datagathering,     // Function to implement the task
-      "Measurement and storing of data",   // Name of the task
-      8192,      // Stack size in bytes
-      NULL,      // Task input parameter
-      1,         // Priority of the task
-      NULL,      // Task handle.
-      0          // Core where the task should run
-  );
+//   xTaskCreatePinnedToCore(
+//       datagathering,     // Function to implement the task
+//       "Measurement and storing of data",   // Name of the task
+//       8192,      // Stack size in bytes
+//       NULL,      // Task input parameter
+//       1,         // Priority of the task
+//       NULL,      // Task handle.
+//       0          // Core where the task should run
+//   );
 
   xTaskCreatePinnedToCore(
       steppermotor,
@@ -354,77 +348,7 @@ void setup() {
 // Loop function
 void loop() {
   server.handleClient();
-}
 
-void moveRotationMotor (SensorData receivedData, float &currentDegree, float &rollSP, bool &rotationmotorRunning) {
-    float roll_error = rollSP - (receivedData.roll);
-    int rot_direction = (roll_error < 0) ? 1 : -1;
-    float nextDegree = currentDegree + rot_direction * (ROTATIONMOTOR_STEP_SIZE / (float)STEPS_PER_DEGREE);
-
-    if (fabs(roll_error) > 5) {
-        if (!rotationmotorRunning) {
-            digitalWrite(ROT_SLEEP_PIN, HIGH);
-            rotationmotorRunning = true;
-        }
-
-        if (nextDegree < ROTATION_MAX_DEGREE && nextDegree > ROTATION_MIN_DEGREE) {
-            rotstepper.setMicrostep(1);
-            rotstepper.move(rot_direction > 0 ? ROTATIONMOTOR_STEP_SIZE : -ROTATIONMOTOR_STEP_SIZE);
-            currentDegree = nextDegree;
-        } else {
-            if (!rotationmotorRunning) {
-                digitalWrite(ROT_SLEEP_PIN, HIGH);
-                rotationmotorRunning = true;
-            }
-
-            if ((rot_direction > 0 && currentDegree >= ROTATION_MAX_DEGREE) || (rot_direction < 0 && currentDegree <= ROTATION_MIN_DEGREE)) {
-                rotstepper.setMicrostep(1);
-                rotstepper.move(rot_direction > 0 ? ROTATIONMOTOR_STEP_SIZE : -ROTATIONMOTOR_STEP_SIZE);
-                currentDegree = nextDegree;
-            }
-        }
-    } else {
-        if (rotationmotorRunning) {
-            digitalWrite(ROT_SLEEP_PIN, LOW);
-            rotationmotorRunning = false;
-        }
-    }
-}
-
-void moveTranslationMotor (SensorData receivedData, float &currentPosition, float &pitchSP, bool translationmotorRunning) {
-    //Translation motor
-    float pitch_error = pitchSP - (receivedData.pitch);
-    int transl_direction = (pitch_error < 0) ? 1 : -1;
-    float nextPosition = currentPosition + transl_direction * (TRANSLATIONMOTOR_STEP_SIZE / (float)STEPS_PER_CM);
-
-   if (fabs(pitch_error) > 5) {
-        if (!translationmotorRunning) {
-            digitalWrite(TRAN_SLEEP_PIN, HIGH);
-            translationmotorRunning = true;
-        }
-
-        if (nextPosition < TRANSLATION_MAX_POSITION_CM && nextPosition > TRANSLATION_MIN_POSITION_CM) {
-            transtepper.setMicrostep(2);
-            transtepper.move(transl_direction > 0 ? TRANSLATIONMOTOR_STEP_SIZE : -TRANSLATIONMOTOR_STEP_SIZE);
-            currentPosition = nextPosition;
-        } else {
-            if (!translationmotorRunning) {
-                digitalWrite(TRAN_SLEEP_PIN, HIGH);
-                translationmotorRunning = true;
-            }
-
-            if ((transl_direction > 0 && currentPosition >= TRANSLATION_MAX_POSITION_CM) || (transl_direction < 0 && currentPosition <= TRANSLATION_MIN_POSITION_CM)) {
-                transtepper.setMicrostep(2);
-                transtepper.move(transl_direction > 0 ? TRANSLATIONMOTOR_STEP_SIZE : -TRANSLATIONMOTOR_STEP_SIZE);
-                currentPosition = nextPosition;
-            }
-        }
-    } else {
-        if (translationmotorRunning) {
-            digitalWrite(TRAN_SLEEP_PIN, LOW);
-            translationmotorRunning = false;
-        }
-    }
 }
 
 void controlRotationMotor (float &rotation_direction, float &currentDegree, bool rotationmotorRunning) {
@@ -526,186 +450,63 @@ void controlTranslationMotor (float &translation_direction, float &currentPositi
 }
 
 void steppermotor(void* pvParameters) {
-  float currentPosition = 0;
-  float currentDegree = 0;
+
+  currentDegree = 0;
+  currentPosition = 0;
 
 
   while (true) {
-    SensorData receivedData;
-    if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY) == pdTRUE) {
+    // SensorData receivedData;
+    // if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY) == pdTRUE) 
 
-      switch(gliderState) {
+    switch(gliderState) {
 
-        case Idle:
-          if (isIdle) {
-            // Serial.println("Idle");
+      case Idle:
 
-            // It is now possible to manually move the motors.
+        if (isIdle) {
+          Serial.print(F("Moving forward?: "));
+          Serial.print(movingForward);
 
-            if (movingForward) {
-                transl_direction = 1;
+          // It is now possible to manually move the motors.
 
-                if (!translationmotorRunning) {
-                    digitalWrite(TRAN_SLEEP_PIN, HIGH);
-                    translationmotorRunning = true;
-                }
+          if (movingForward) {
+              transl_direction = 1;
 
-                controlTranslationMotor(transl_direction, currentPosition, translationmotorRunning);
-            } else {
-                if (translationmotorRunning) {
-                    digitalWrite(TRAN_SLEEP_PIN, LOW);
-                    translationmotorRunning = false;
-                }
-            }
+              if (!translationmotorRunning) {
+                  digitalWrite(TRAN_SLEEP_PIN, HIGH);
+                  translationmotorRunning = true;
+              }
 
-            if (movingBackward) {
-                transl_direction = -1;
-
-                if (!translationmotorRunning) {
-                    digitalWrite(TRAN_SLEEP_PIN, HIGH);
-                    translationmotorRunning = true;
-                }
-
-                controlTranslationMotor(transl_direction, currentPosition, translationmotorRunning);
-
-            } else {
+              controlTranslationMotor(transl_direction, currentPosition, translationmotorRunning);
+          } else {
               if (translationmotorRunning) {
                   digitalWrite(TRAN_SLEEP_PIN, LOW);
                   translationmotorRunning = false;
               }
+          }
+
+          if (movingBackward) {
+              transl_direction = -1;
+
+              if (!translationmotorRunning) {
+                  digitalWrite(TRAN_SLEEP_PIN, HIGH);
+                  translationmotorRunning = true;
+              }
+
+              controlTranslationMotor(transl_direction, currentPosition, translationmotorRunning);
+
+          } else {
+            if (translationmotorRunning) {
+                digitalWrite(TRAN_SLEEP_PIN, LOW);
+                translationmotorRunning = false;
             }
           }
-          
-          break;
-
-
-        case Diving:
-
-          if (isDiving) {
-            float pitchSP = 0;
-
-            Serial.print(F("Roll:"));
-            Serial.print(receivedData.roll, 1);
-            Serial.print(F(" Pitch:"));
-            Serial.print(receivedData.pitch, 1);
-            Serial.print(F(" Yaw:"));
-            Serial.println(receivedData.yaw, 1);
-            Serial.print(F("Current Position:"));
-            Serial.println(currentPosition, 1); 
-
-            moveTranslationMotor(receivedData, currentPosition, pitchSP, translationmotorRunning);
-          }
-
-          break;
-
-        case Calibrating:
-          if (isCalibrating) {
-            Serial.println("Calibrating");
-
-            currentPosition = 0;
-            currentDegree = 0;
-
-            delay(1000);
-
-            Serial.println("Calibration done, going into Idle mode");
-
-            isIdle = true;
-            isCalibrating = false;
-            gliderState = Idle;
-          } 
-
-          break; 
-
-        // case GlidingDown:
-          
-        //     break;
-        
-        // case GlidingUp:
-
-        //     break;
-
-      }
-
-    // Yield to allow other tasks to run
-    vTaskDelay(pdMS_TO_TICKS(100));
-    }
-  }
-}
-
-void datagathering(void* pvParameters) {
-  while (true) {
-      icm_20948_DMP_data_t IMUdata;
-      myICM.readDMPdataFromFIFO(&IMUdata);
-
-    if ((myICM.status == ICM_20948_Stat_Ok) || (myICM.status == ICM_20948_Stat_FIFOMoreDataAvail)) {
-        SensorData data;
-        // myICM.getAGMT(); // The values are only updated when you call 'getAGMT'
-
-        if ((IMUdata.header & DMP_header_bitmap_Quat6) > 0) {
-          // Q0 value is computed from this equation: Q0^2 + Q1^2 + Q2^2 + Q3^2 = 1.
-          // In case of drift, the sum will not add to 1, therefore, quaternion data need to be corrected with right bias values.
-          // The quaternion data is scaled by 2^30.
-
-          //Serial.printf("Quat6 data is: Q1:%ld Q2:%ld Q3:%ld\r\n", data.Quat6.Data.Q1, data.Quat6.Data.Q2, data.Quat6.Data.Q3);
-
-          // Scale to +/- 1
-          double q1 = ((double)IMUdata.Quat6.Data.Q1) / 1073741824.0; // Convert to double. Divide by 2^30
-          double q2 = ((double)IMUdata.Quat6.Data.Q2) / 1073741824.0; // Convert to double. Divide by 2^30
-          double q3 = ((double)IMUdata.Quat6.Data.Q3) / 1073741824.0; // Convert to double. Divide by 2^30
-
-          double q0 = sqrt(1.0 - ((q1 * q1) + (q2 * q2) + (q3 * q3)));
-
-          double q2sqr = q2 * q2;
-
-          // roll (x-axis rotation)
-          double t0 = +2.0 * (q0 * q1 + q2 * q3);
-          double t1 = +1.0 - 2.0 * (q1 * q1 + q2sqr);
-          data.roll = atan2(t0, t1) * 180.0 / PI;
-
-          // pitch (y-axis rotation)
-          double t2 = +2.0 * (q0 * q2 - q3 * q1);
-          t2 = t2 > 1.0 ? 1.0 : t2;
-          t2 = t2 < -1.0 ? -1.0 : t2;
-          data.pitch = asin(t2) * 180.0 / PI;
-
-          // yaw (z-axis rotation)
-          double t3 = +2.0 * (q0 * q3 + q1 * q2);
-          double t4 = +1.0 - 2.0 * (q2sqr + q3 * q3);
-          data.yaw = atan2(t3, t4) * 180.0 / PI;
-
-
-          // Calculate display pitch and roll
-          displaypitch = data.pitch;
-          displayroll = data.roll;
-          displayyaw = data.yaw;
-
-          // Psensor.read();
-
-          // data.depth = Psensor.depth();
-          // data.pressure = Psensor.pressure();
-
-          // data.potentiometer = analogRead(SOFT_POT_PIN);
-
-          if (xQueueSend(sensorDataQueue, &data, portMAX_DELAY) != pdPASS) {
-              Serial.println("Failed to send data to queue");
-          }
-
-          // Tsensor.read();
-
-          // float temperature = Tsensor.temperature(); 
-
-          // String logData = "Pitch: " + String(data.pitch * 180 / PI) + " degrees, " +
-          //                  "Roll: " + String(data.roll * 180 / PI) + " degrees, ";
-                          //  "Depth: " + String(data.depth) + " m, " +
-                          //  "Pressure: " + String(data.pressure) + " mbar, " +
-                          //  "Temperature: " + String(temperature) + " Celsius";
-                          //  "Current: " + String(current) + " A";
-          // writeSD(logData);
         }
+        
+        break;
 
-    // } else {
-    //     Serial.println("Sensor data not ready");
     }
-    vTaskDelay(pdMS_TO_TICKS(10)); // Adding a delay to reduce bus congestion and improve stability
+
   }
 }
+

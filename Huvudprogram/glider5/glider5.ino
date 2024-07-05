@@ -1,73 +1,78 @@
 #include <Arduino.h>
-#include <ICM_20948.h>
-#include <KellerLD.h>
 #include <Wire.h>
-#include "SparkFun_Qwiic_OpenLog_Arduino_Library.h"
-#include <TSYS01.h>
 #include <pgmspace.h>
 #include <WiFi.h>
 #include <WebServer.h>
 #include <esp_wifi.h>
-#include "page.h"  // Include the header file with HTML content
+#include "page.h"               // Include the header file with HTML content
 
 
-#define stepsPerRevolution 200
-#define STEPS_PER_CM 600
+//.............................................................................
+
+//Pin definitions for the ESP32 S3 
+
+#define TRAN_DIR_PIN        17 //Translation motor direction pin
+#define TRAN_STEP_PIN       16 //Translation motor step pin
+#define TRAN_SLEEP_PIN      15 //Trasnlation motor sleep pin
+#define ROT_DIR_PIN          9 //Rotation motor direction pin
+#define ROT_STEP_PIN         8 //Rotation motor step pin
+#define ROT_SLEEP_PIN       18 //Rotation motor sleep pin
+#define SDA_PIN             13 //SDA pin for I2C communication
+#define SCL_PIN             14 //SCL pin for I2C communication
+#define MODE0               10 //Microstepping mode pin 0
+#define MODE1               11 //Microstepping mode pin 1
+#define MODE2               12 //Microstepping mode pin 2
+#define SOFT_POT_PIN         2 //Pin connected to softpot wiper
+#define PUMP_PIN             5 //Pin connected to pump
+#define VALVE_PIN            6 //Pin connected to valve
+#define DROPWEIGHT_PIN       4 //Pin connected to dropweight
+
+//.............................................................................
+
+//Stepper motor definitions
+
+#include "DRV8825.h" //Library for the stepper motor driver
+
+#define stepsPerRevolution 200 
+#define STEPS_PER_CM 600    //Högst oklart, gör bättre mätning
 #define STEPS_PER_DEGREE 10 //Ta reda på detta värde
 
-#define TRANSLATION_MIN_POSITION_CM -1
-#define TRANSLATION_MAX_POSITION_CM 1
-#define TRANSLATIONMOTOR_STEP_SIZE 5
+#define TRANSLATION_MIN_POSITION_CM -1  //Maximum distance the translation motor can move the weight forwards
+#define TRANSLATION_MAX_POSITION_CM 1   //Maximum distance the translation motor can move the weight backwards
+#define TRANSLATIONMOTOR_STEP_SIZE 5    //Step size for the translation motor
 
-#define ROTATION_MIN_DEGREE -90
-#define ROTATION_MAX_DEGREE 90
-#define ROTATIONMOTOR_STEP_SIZE 1
+#define ROTATION_MIN_DEGREE -90 //Minimum degree the rotation motor can move the weight
+#define ROTATION_MAX_DEGREE 90 //Maximum degree the rotation motor can move the weight
+#define ROTATIONMOTOR_STEP_SIZE 5 //Step size for the rotation motor
 
-#define AD0_VAL 1
+#define RPM 186 //The RPM of the motors
 
-#define RPM 186
+#define MICROSTEP 2 //Microstepping value
 
-#define TRAN_DIR_PIN 17 //Tidigare 9
-#define TRAN_STEP_PIN 16 //Tidigare 46
-#define TRAN_SLEEP_PIN 15 //Tidigare 3
+DRV8825 transtepper(stepsPerRevolution, TRAN_DIR_PIN, TRAN_STEP_PIN, TRAN_SLEEP_PIN, MODE0, MODE1, MODE2);  //Create an instance of the stepper motor driver for the translation motor
+DRV8825 rotstepper(stepsPerRevolution, ROT_DIR_PIN, ROT_STEP_PIN, ROT_SLEEP_PIN, MODE0, MODE1, MODE2); //Create an instance of the stepper motor driver for the rotation motor
 
-#define ROT_DIR_PIN 9
-#define ROT_STEP_PIN 8
-#define ROT_SLEEP_PIN 18
+//.............................................................................
 
-#define SDA_PIN 13
-#define SCL_PIN 14
+//Keep track of the number of dives the glider has done
+int n_dyk = 0;
 
-#include "DRV8825.h"
-#define MODE0 10
-#define MODE1 11
-#define MODE2 12
-DRV8825 transtepper(stepsPerRevolution, TRAN_DIR_PIN, TRAN_STEP_PIN, TRAN_SLEEP_PIN, MODE0, MODE1, MODE2);
-DRV8825 rotstepper(stepsPerRevolution, ROT_DIR_PIN, ROT_STEP_PIN, ROT_SLEEP_PIN, MODE0, MODE1, MODE2);
-
-#define SOFT_POT_PIN 2 // Pin connected to softpot wiper
-#define PUMP_PIN 5
-#define VALVE_PIN 6
-#define DROPWEIGHT_PIN 4
-
-const int GRAPH_LENGTH = 40; // Length of line graph
-
-bool glideUp = false;
-bool glideDown = false;
-bool transmit = true;
-float n_dyk = 0;
-
+//Flag to check if the dropweight has been released
 bool dropweight = false;
 
 bool isIdle = false;
 bool isDiving = false;
 bool isCalibrating = false;
 
+//Flags that are used to control the movement of the glider when in Idle state. 
+//Can be set to true via the SeaGUL webpage.
 bool rotatingLeft = false;
 bool rotatingRight = false;
 bool movingForward = false;
 bool movingBackward = false;
 
+
+//Values that are displayed on the SeaGUL webpage
 float displaypitch = 0;
 float displayroll = 0;
 float displayyaw = 0;
@@ -75,6 +80,13 @@ float displaypressure = 0;
 float displaytemperature = 0;
 float displaypotentiometer = 0;
 
+//Used to keep track on where the weight is positioned
+float nextPosition = 0;
+float nextDegree = 0;
+
+unsigned long stateStartMillis = 0; // Variable to store the start time of the states GlidingDown and GlidingUp
+
+// Struct to hold sensor data
 struct SensorData {
     float pitch;
     float roll;
@@ -84,7 +96,9 @@ struct SensorData {
     float potentiometer;
     float temperature;
 };
+QueueHandle_t sensorDataQueue; // Queue to hold sensor data
 
+// Enum to keep track of the state of the glider
 enum StepperState {
     Idle,
     Diving,
@@ -94,32 +108,44 @@ enum StepperState {
     DropWeight,
     Surface
 };
+StepperState gliderState = Idle; // Initial state of the glider
 
-StepperState gliderState = Idle;
-
-QueueHandle_t sensorDataQueue;
-
+// Pressure sensor
+#include <KellerLD.h>
 KellerLD Psensor;
 
+// Temperature sensor
+#include <TSYS01.h>
 TSYS01 Tsensor;
 
+// Orientation sensor
+#include <ICM_20948.h>
+#define AD0_VAL 1 //The value of the AD0 pin on the ICM-20948 sensor
 ICM_20948_I2C myICM;
 
+// SD-card logging
+#include "SparkFun_Qwiic_OpenLog_Arduino_Library.h"
 OpenLog myLog;
+String fileName = "SD-test10_240612.txt"; //Name of the file that the data will be stored in
 
-String fileName = "SD-test10_240612.txt";
+//.............................................................................
+
+// Function prototypes
 
 void openLogSetup();
 void moveRotationMotor(SensorData receivedData, float &currentDegree, float &rollSP, bool &rotationmotorRunning);
 void moveTranslationMotor(SensorData receivedData, float &currentPosition, float &pitchSP, bool translationmotorRunning);
-void steppermotor(void* pvParameters);
+void glidercontrol(void* pvParameters);
 void datagathering(void* pvParameters);
-
 void writeSD(String measurement) {
   myLog.append(fileName); //Bestämmer att vi ska sriva i denna filen 
   myLog.println(measurement); //Skriver till filen
   myLog.syncFile();
 }
+
+//.............................................................................
+
+//NETWORKING
 
 // Network credentials
 const char* ssid = "SEAGUL";
@@ -154,33 +180,37 @@ void handleUpdate() {
   }
 }
 
+// Handle when idle button is pressed
 void handleIdle() {
-  isIdle = true;
-  isDiving = false;
-  isCalibrating = false;
+  // isIdle = true;
+  // isDiving = false;
+  // isCalibrating = false;
+  gliderState = Idle;
   Serial.println("Set to Idle");
   server.send(200, "text/plain", "Set to Idle");
 }
 
+// Handle when intitiate dive button is pressed
 void handleInitiateDive() {
-  isIdle = false;
-  isDiving = true;
-  isCalibrating = false;
+  // isIdle = false;
+  // isDiving = true;
+  // isCalibrating = false;
+  gliderState = Diving;
   Serial.println("Dive Initiated");
   server.send(200, "text/plain", "Dive Initiated");
-  delay(1000);
-  currentState = "Diving";
-  Serial.println("Diving");
 }
 
+// Handle when calibrate button is pressed
 void handleCalibrate() {
-  isIdle = false;
-  isDiving = false;
-  isCalibrating = true;
+  // isIdle = false;
+  // isDiving = false;
+  // isCalibrating = true;
+  gliderState = Calibrating;
   Serial.println("Calibration Started");
   server.send(200, "text/plain", "Calibration Started");
 }
 
+// Handle when rotate left button is pressed
 void handleRotateLeft() {
   rotatingLeft = true;
 //   Serial.println("Rotate Left command received");
@@ -189,6 +219,7 @@ void handleRotateLeft() {
   server.send(200, "text/plain", "Rotate Left started");
 }
 
+// Handle when rotate right button is pressed
 void handleRotateRight() {
   rotatingRight = true;
 //   Serial.println("Rotate Right command received");
@@ -197,6 +228,7 @@ void handleRotateRight() {
   server.send(200, "text/plain", "Rotate Right started");
 }
 
+// Handle when move forward button is pressed
 void handleMoveForward() {
   movingForward = true;
 //   Serial.println("Move Forward command received");
@@ -205,6 +237,7 @@ void handleMoveForward() {
   server.send(200, "text/plain", "Move Forward started");
 }
 
+// Handle when move backward button is pressed
 void handleMoveBackward() {
   movingBackward = true;
 //   Serial.println("Move Backward command received");
@@ -213,6 +246,7 @@ void handleMoveBackward() {
   server.send(200, "text/plain", "Move Backward started");
 }
 
+// Handle when rotate left button is released
 void handleStopRotateLeft() {
   rotatingLeft = false;
 //   Serial.println("Rotate Left stopped");
@@ -221,25 +255,25 @@ void handleStopRotateLeft() {
   server.send(200, "text/plain", "Rotate Left stopped");
 }
 
+// Handle when rotate right button is released
 void handleStopRotateRight() {
   rotatingRight = false;
   server.send(200, "text/plain", "Rotate Right stopped");
 }
 
+// Handle when move forward button is released
 void handleStopMoveForward() {
   movingForward = false;
   server.send(200, "text/plain", "Move Forward stopped");
 }
 
+// Handle when move backward button is released
 void handleStopMoveBackward() {
   movingBackward = false;
-//   Serial.println("Move Backward stopped");
-//   Serial.print("movingBackward: ");
-//   Serial.println(movingBackward);
   server.send(200, "text/plain", "Move Backward stopped");
 }
 
-// Function to generate random number
+// Function to generate random number 
 float randomFloat(float minValue, float maxValue) {
   return minValue + (float)rand() / ((float)RAND_MAX / (maxValue - minValue));
 }
@@ -350,7 +384,6 @@ void setup() {
 
     Psensor.init();
     Psensor.setFluidDensity(997); // kg/m^3 (freshwater, 1029 for seawater)
-
     if (Psensor.isInitialized()) {
         Serial.println("Pressure sensor connected.");
     } else {
@@ -358,7 +391,6 @@ void setup() {
     }
 
     Tsensor.init();
-
     while (!Tsensor.init()) {
         Serial.println("TSYS01 device failed to initialize!");
         delay(1000);
@@ -373,23 +405,23 @@ void setup() {
     }
 
     xTaskCreatePinnedToCore(
-        datagathering,     // Function to implement the task
+        datagathering,                       // Function to implement the task
         "Measurement and storing of data",   // Name of the task
-        2048,      // Stack size in bytes
-        NULL,      // Task input parameter
-        1,         // Priority of the task
-        NULL,      // Task handle.
-        0          // Core where the task should run
+        2048,                                // Stack size in bytes
+        NULL,                                // Task input parameter
+        1,                                   // Priority of the task
+        NULL,                                // Task handle.
+        0                                    // Core where the task should run
     );
 
     xTaskCreatePinnedToCore(
-        steppermotor,
-        "driving of stepper motor",
-        2048,
-        NULL,
-        1,
-        NULL,
-        1
+        glidercontrol,                      // Function to implement the task
+        "descision making for glider",      // Name of the task
+        2048,                               // Stack size in bytes
+        NULL,                               // Task input parameter
+        1,                                  // Priority of the task
+        NULL,                               // Task handle.
+        1                                   // Core where the task should run
     );
 
     WiFi.softAP(ssid, password);
@@ -412,6 +444,8 @@ void setup() {
     
     server.begin();
     Serial.println("HTTP server started");
+
+
 }
 
 void loop() {
@@ -463,7 +497,7 @@ void openLogSetup() {
 void moveRotationMotor (SensorData receivedData, float &currentDegree, float &rollSP, bool &rotationmotorRunning) {
     float roll_error = rollSP - (receivedData.roll * 180 / PI);
     int rot_direction = (roll_error < 0) ? 1 : -1;
-    float nextDegree = currentDegree + rot_direction * (ROTATIONMOTOR_STEP_SIZE / (float)STEPS_PER_DEGREE);
+    nextDegree = currentDegree + rot_direction * (ROTATIONMOTOR_STEP_SIZE / (float)STEPS_PER_DEGREE);
 
     if (fabs(roll_error) > 5) {
         if (!rotationmotorRunning) {
@@ -499,7 +533,7 @@ void moveTranslationMotor (SensorData receivedData, float &currentPosition, floa
     //Translation motor
     float pitch_error = pitchSP - (receivedData.pitch * 180 / PI);
     int transl_direction = (pitch_error < 0) ? 1 : -1;
-    float nextPosition = currentPosition + transl_direction * (TRANSLATIONMOTOR_STEP_SIZE / (float)STEPS_PER_CM);
+    nextPosition = currentPosition + transl_direction * (TRANSLATIONMOTOR_STEP_SIZE / (float)STEPS_PER_CM);
 
    if (fabs(pitch_error) > 5) {
         if (!translationmotorRunning) {
@@ -531,23 +565,134 @@ void moveTranslationMotor (SensorData receivedData, float &currentPosition, floa
     }
 }
 
-void steppermotor(void* pvParameters) {
+void controlRotationMotor (float &rotation_direction, float &currentDegree, bool rotationmotorRunning) {
+    nextDegree = currentDegree + rotation_direction * (ROTATIONMOTOR_STEP_SIZE / (float)STEPS_PER_DEGREE);
+
+    if (rotation_direction > 0) {
+        if (nextDegree < ROTATION_MAX_DEGREE && nextDegree > ROTATION_MAX_DEGREE) {
+            rotstepper.setMicrostep(MICROSTEP);
+            rotstepper.move(ROTATIONMOTOR_STEP_SIZE);
+            currentDegree = nextDegree;
+            Serial.println(currentDegree);
+            
+        } else {
+            if (!rotationmotorRunning) {
+                digitalWrite(ROT_SLEEP_PIN, HIGH);
+                rotationmotorRunning = true;
+            }
+
+            if ((rotation_direction > 0 && currentDegree >= ROTATION_MIN_DEGREE)) {
+                rotstepper.setMicrostep(MICROSTEP);
+                rotstepper.move(ROTATIONMOTOR_STEP_SIZE);
+                currentDegree = nextDegree;
+                Serial.println(currentDegree);
+            }
+
+        }    
+    }
+
+    if (rotation_direction < 0) {
+
+        if (nextDegree < ROTATION_MAX_DEGREE && nextDegree > ROTATION_MAX_DEGREE) {
+            rotstepper.setMicrostep(MICROSTEP);
+            rotstepper.move(-ROTATIONMOTOR_STEP_SIZE);
+            currentDegree = nextDegree;
+            Serial.println(currentDegree);
+
+        } else {
+
+            if (!rotationmotorRunning) {
+                digitalWrite(ROT_SLEEP_PIN, HIGH);
+                rotationmotorRunning = true;
+            }
+
+            if ((rotation_direction < 0 && currentDegree <= ROTATION_MIN_DEGREE)) {
+                rotstepper.setMicrostep(MICROSTEP);
+                rotstepper.move(-ROTATIONMOTOR_STEP_SIZE);
+                currentDegree = nextDegree;
+                Serial.println(currentDegree);
+            }   
+
+        }
+    }
+}
+
+void controlTranslationMotor (float &translation_direction, float &currentPosition, bool translationmotorRunning) {
+  nextPosition = currentPosition + translation_direction * (TRANSLATIONMOTOR_STEP_SIZE / (float)STEPS_PER_CM);
+
+
+  if (translation_direction > 0) {
+      if (nextPosition < TRANSLATION_MAX_POSITION_CM && nextPosition > TRANSLATION_MIN_POSITION_CM) {
+          transtepper.setMicrostep(MICROSTEP);
+          transtepper.move(TRANSLATIONMOTOR_STEP_SIZE);
+          currentPosition = nextPosition;
+          Serial.println(currentPosition);
+      } else {
+          if (!translationmotorRunning) {
+              digitalWrite(TRAN_SLEEP_PIN, HIGH);
+              translationmotorRunning = true;
+          }
+
+          if ((translation_direction > 0 && currentPosition >= TRANSLATION_MIN_POSITION_CM)) {
+              transtepper.setMicrostep(MICROSTEP);
+              transtepper.move(TRANSLATIONMOTOR_STEP_SIZE);
+              currentPosition = nextPosition;
+              Serial.println(currentPosition);
+          }
+      }
+  }
+
+  if (translation_direction < 0) {
+
+      if (nextPosition < TRANSLATION_MAX_POSITION_CM && nextPosition > TRANSLATION_MIN_POSITION_CM) {
+          transtepper.setMicrostep(MICROSTEP);
+          transtepper.move(-TRANSLATIONMOTOR_STEP_SIZE);
+          currentPosition = nextPosition;
+          Serial.println(currentPosition);
+      } else {
+          if (!translationmotorRunning) {
+              digitalWrite(TRAN_SLEEP_PIN, HIGH);
+              translationmotorRunning = true;
+          }
+
+          if ((translation_direction < 0 && currentPosition <= TRANSLATION_MIN_POSITION_CM)) {
+              transtepper.setMicrostep(MICROSTEP);
+              transtepper.move(-TRANSLATIONMOTOR_STEP_SIZE);
+              currentPosition = nextPosition;
+              Serial.println(currentPosition);
+          }
+      }
+  }
+}
+
+void glidercontrol(void* pvParameters) {
     bool translationmotorRunning = false;
     bool rotationmotorRunning = false;
-    bool glideDownInitialized = false;
-    bool glideUpInitialized = false;
+    bool glideDownReservoirFull = false;
+    bool glideUpReservoirEmpty = false;
     bool dropweightReleased = false;
     bool dykcount = false;
     float currentPosition = 0;
     float currentDegree = 0;
     float pitchSP = 0;
     float rollSP = 0;
-    unsigned long glideDownStartTime = 0;
-    unsigned long glideUpStartTime = 0;
-    const unsigned long ONE_HOUR = 3600000; // 1 hour in milliseconds
+    unsigned long glideDownTime = 0;
+    unsigned long glideUpTime = 0;
+    int valePinState = digitalRead(VALVE_PIN);
+    int pumpPinState = digitalRead(PUMP_PIN);
+
+    float previousDepth = 0; // Variable to store the previous depth
+    unsigned long previousTime = 0; // Variable to store the previous time
+    const unsigned long ONE_HOUR = 3600000; // 1 hour in milliseconds, used to check if the glider has been going down/up for too long
+    const unsigned long sampleInterval = 10000; //Interval to sample the depth (in milliseconds)
+    unsigned int warningCount = 0; // Variable to keep track of the number of warnings
+    bool warningFlag = false; // Flag to indicate if a warning has been issued
+    bool previousTimeSet = false; // Flag to indicate if the previous time has been set when Down/Up states shift
+
     SensorData receivedData;
 
     while (true) {
+      unsigned long currentMillis = millis(); //Holds the current time the program has been running in milliseconds
         if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
 
             //ToDo:
@@ -557,27 +702,82 @@ void steppermotor(void* pvParameters) {
             //
             // 2. 
             // Add checks to ensure that the glider is not moving in the wrong direction. So that when it is supposed to move up, it is not moving down.
+            // 
+            // 3. 
+            // Add communication with AGT 
             //
-            // 3.
+            // 4. 
+            // 
             
 
 
-            switch (gliderState) {
+            switch (gliderState) { //Not sure if this should be outside xQueueReceive or not.
 
-                case Idle:
+                case Idle: //This case is for when the glider is not doing anything. Activated via button on SeaGUL webpage.
+
+                    //Check if the pump or valve pins are high. If they are, set them to low.
+                    if (pumpPinState == HIGH) {
+                      digitalWrite(PUMP_PIN, LOW);
+                    }
+                    if (valePinState == HIGH) {
+                      digitalWrite(VALVE_PIN, LOW);
+                    }
+
+                    //It is now possible to move the stepper motors manually through the SeaGUL webpage.
+                    if (movingForward) {
+                        float translation_direction = 1; // 1 = forward, -1 = backward
+
+                        if (!translationmotorRunning) { //Start the motor if it is not already running
+                            digitalWrite(TRAN_SLEEP_PIN, HIGH);
+                            translationmotorRunning = true;
+                        }
+
+                        controlTranslationMotor(translation_direction, currentPosition, translationmotorRunning); //Move the motor
+                    } else {
+                        if (translationmotorRunning) { //Stop the motor
+                            digitalWrite(TRAN_SLEEP_PIN, LOW);
+                            translationmotorRunning = false;
+                        }
+                    }
+
+                    if (movingBackward) {
+                        float translation_direction = -1; // 1 = forward, -1 = backward
+
+                        if (!translationmotorRunning) { //Start the motor if it is not already running
+                            digitalWrite(TRAN_SLEEP_PIN, HIGH);
+                            translationmotorRunning = true;
+                        }
+
+                        controlTranslationMotor(translation_direction, currentPosition, translationmotorRunning); //Move the motor
+
+                    } else {
+                      if (translationmotorRunning) { //Stop the motor
+                          digitalWrite(TRAN_SLEEP_PIN, LOW);
+                          translationmotorRunning = false;
+                      }
+                    }
 
                     break;
 
-                case Diving:
+                case Diving: //This case activates when the Initiate Dive button is pressed on the SeaGUL webpage.
+
+                    //Check if the pump or valve pins are high. If they are, set them to low.
+                    if (pumpPinState == HIGH) {
+                      digitalWrite(PUMP_PIN, LOW);
+                    }
+                    if (valePinState == HIGH) {
+                      digitalWrite(VALVE_PIN, LOW);
+                    }
                     Serial.println("Initiating dive...");
 
-                    n_dyk = 0;
+                    n_dyk = 0; //Reset the number of dives
 
                     delay(1000);
 
                     Serial.println("Dive initiated. Moving to GlidingDown state.");
                     
                     gliderState = GlidingDown;
+                    stateStartMillis = currentMillis; //Store the time the GlidingDown state started
                     break;
 
                 case Calibrating:
@@ -599,37 +799,80 @@ void steppermotor(void* pvParameters) {
 
                 case GlidingDown:
 
+                    //Reset flag, warning count and timer
+                    glideUpReservoirEmpty = false;
+                    warningCount = 0;
+
                     pitchSP = -20; // Setpoint for pitch
                     rollSP = 0; // Setpoint for roll
+
                     //Future addition: Turning motion
     
                     //First fill the reservoir with oil.
-                    if (!glideDownInitialized) {
+                    if (!glideDownReservoirFull) {
                         Serial.println("Opening valve and recording time");
-                        glideDownStartTime = millis();
                         digitalWrite(VALVE_PIN, HIGH);
 
-                        if (receivedData.potentiometer >= 3500) {
+                        if (receivedData.potentiometer >= 3500) { //When the reservoir is full we close the valve.
                             Serial.println("Reservoir full, closing valve.");
                             digitalWrite(VALVE_PIN, LOW);
-                            glideDownInitialized = true;
+                            glideDownReservoirFull = true; 
                         }
                     }
 
                     //After the reservoir is full we can regulate the pitch and roll of the glider.
                     //We can't do these simultaneously because the electrical system will be overloaded. 
-                    if (glideDownInitialized) {
+                    if (glideDownReservoirFull) {
+
+                        if (!previousTimeSet) { // Set the previous time to the current time after the reservoir is full.
+                            previousTime = currentMillis;
+                            previousTimeSet = true;
+                        }
+
                         moveTranslationMotor(receivedData, currentPosition, pitchSP, translationmotorRunning);
                         moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
 
                         if (receivedData.depth >= 95) {
                             Serial.println("Depth reached, moving to GlidingUp state.");
                             gliderState = GlidingUp;
+
+                            //Reset boolean from the dive down.
+                            glideDownReservoirFull = false;
+
+                            stateStartMillis = currentMillis; //Store the time the GlidingUp state started
+                            previousTimeSet = false;
+                        }
+
+                        if (currentMillis - previousTime >= sampleInterval) {
+                          warningFlag = false;
+                          float depthChangeRate = (receivedData.depth - previousDepth) / ((glideDownTime - previousTime)/1000);
+                          previousDepth = receivedData.depth;
+                          previousTime = currentMillis;
+
+                          if (depthChangeRate > 0) {
+                            
+                            Serial.println("WARNING: Glider is moving upwards instead of down!");
+
+                            if (!warningFlag) {
+                              warningCount += 1;
+                              warningFlag = true;
+                            }
+
+                            if (warningCount >= 3) {
+                              Serial.println("WARNING: Glider is moving upwards instead of down! Releasing weight by moving to DropWeight state.");
+                              gliderState = DropWeight;
+                            }                            
+                          }
+                        }
+                        
+                        if (currentMillis - stateStartMillis >= ONE_HOUR) {
+                            Serial.println("To much time has passed, releasing weight by moving to DropWeight state.");
+                            gliderState = DropWeight;
                         }
                     }
 
                     //Check if too much time has passed for the glider to reach its target depth.
-                    if (millis() - glideDownStartTime >= ONE_HOUR) {
+                    if (currentMillis - stateStartMillis >= ONE_HOUR) {
                         Serial.println("To much time has passed, releasing weight by moving to DropWeight state.");
                         gliderState = DropWeight;
                     }
@@ -638,24 +881,32 @@ void steppermotor(void* pvParameters) {
                 
                 case GlidingUp:
 
+                    warningCount = 0;
+                    previousTime = 0;
+
                     pitchSP = 20; // Setpoint for pitch
                     rollSP = 0; // Setpoint for roll
 
                     //First start the pump to empty the reservoir.
-                    if (!glideUpInitialized) {
+                    if (!glideUpReservoirEmpty) {
                         Serial.println("Starting pump and recording time");
-                        glideUpStartTime = millis();
                         digitalWrite(PUMP_PIN, HIGH);
 
                         if (receivedData.potentiometer <= 500) {
                             Serial.println("Reservoir empty, stopping pump.");
                             digitalWrite(PUMP_PIN, LOW);
-                            glideUpInitialized = true;
+                            glideUpReservoirEmpty = true;
                         }
                     }
 
                     //After the reservoir is empty we can regulate the pitch and roll of the glider.
-                    if (glideUpInitialized) {
+                    if (glideUpReservoirEmpty) {
+
+                        if (!previousTimeSet) { // Set the previous time to the current time after the reservoir is empty.
+                            previousTime = currentMillis;
+                            previousTimeSet = true;
+                        }
+
                         moveTranslationMotor(receivedData, currentPosition, pitchSP, translationmotorRunning);
                         moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
 
@@ -671,16 +922,43 @@ void steppermotor(void* pvParameters) {
                             //If the number of dives is less than 3 we will continue diving by returning to the GlidingDown state.
                             if (n_dyk < 3) {
                                 gliderState = GlidingDown;
+                                dykcount = false;
+                                stateStartMillis = currentMillis; //Store the time the GlidingDown state started
+                                previousTimeSet = false;
                             }
 
-                            //If the number of dives is 3 or more we will move to the Surface state.
+                            //If the number of dives is 3 or more we will move to the Surface state and reset the reservoir flag. 
                             if (n_dyk >= 3) {
                                 gliderState = Surface;
+                                glideUpReservoirEmpty = false;
+                                dykcount = false;
                             }
                         }
 
+                        if (currentMillis - previousTime >= sampleInterval) {
+                          warningFlag = false;
+                          float depthChangeRate = (receivedData.depth - previousDepth) / ((millis() - previousTime)/1000);
+                          previousDepth = receivedData.depth;
+                          previousTime = currentMillis;
+
+                          if (depthChangeRate < 0) {
+
+                            Serial.println("WARNING: Glider is moving downwards instead of up!");
+
+                            if(!warningFlag) {
+                              warningCount += 1;
+                              warningFlag = true;
+                            }
+                            
+                            if (warningCount >= 3) {
+                              Serial.println("WARNING: Glider is moving downwards instead of up! Releasing weight by moving to DropWeight state.");
+                              gliderState = DropWeight;
+                            }
+                          }
+                        }
+
                         //Check if too much time has passed for the glider to rise to the surface. 
-                        if (millis() - glideUpStartTime >= ONE_HOUR) {
+                        if (currentMillis - stateStartMillis >= ONE_HOUR) {
                             Serial.println("To much time has passed, releasing weight by moving to DropWeight state.");
                             gliderState = DropWeight;
                         }
@@ -699,24 +977,36 @@ void steppermotor(void* pvParameters) {
                         //so that the glider can be picked up.
                     }
 
+                    //Battery check. If the battery is low, we want to transmit that information to land.
+
                     //Send GPS position to land along with the state of the glider.
 
 
                     //Await command to dive again.
 
-                    //When command is given enter the Diving state.
+                    //When command is given enter the Diving state and reset the number of dives
                     gliderState = Diving;
+                    n_dyk = 0;
 
                     break;
 
                 case DropWeight:
                     Serial.println("Releasing weight...");
+
+                    //Check if the pump or valve pins are high. If they are, set them to low.
+                    if (pumpPinState == HIGH) {
+                      digitalWrite(PUMP_PIN, LOW);
+                    }
+                    if (valePinState == HIGH) {
+                      digitalWrite(VALVE_PIN, LOW);
+                    }
                     
                     digitalWrite(DROPWEIGHT_PIN, HIGH);
 
                     dropweightReleased = true;
 
                     //After the release of the dropweight, enter Surface state.
+                    gliderState = Surface;
                     break;
             }
         }
@@ -762,11 +1052,12 @@ void datagathering(void* pvParameters) {
             double t4 = +1.0 - 2.0 * (q2sqr + q3 * q3);
             data.yaw = atan2(t3, t4) * 180.0 / PI;
 
-            // Calculate display pitch and roll
+            // Calculate display pitch and roll, the values that are displayed on the SeaGUL webpage.
             displaypitch = data.pitch;
             displayroll = data.roll;
             displayyaw = data.yaw;
 
+            // Read pressure and temperature
             Psensor.read();
             data.depth = Psensor.depth();
             data.pressure = Psensor.pressure();
@@ -776,13 +1067,16 @@ void datagathering(void* pvParameters) {
             data.temperature = Tsensor.temperature();
             displaytemperature = data.temperature;
 
+            // Read potentiometer
             data.potentiometer = analogRead(SOFT_POT_PIN);
             displaypotentiometer = data.potentiometer;
 
+            // Send data to the second core via a queue
             if (xQueueSend(sensorDataQueue, &data, portMAX_DELAY) != pdPASS) {
                 Serial.println("Failed to send data to queue");
             }
 
+            // Log the data to the SD card
             String logData = "Pitch: " + String(data.pitch) + " degrees, " +
                              "Roll: " + String(data.roll) + " degrees, " +
                              "Yaw: " + String(data.yaw) + " degrees, " +

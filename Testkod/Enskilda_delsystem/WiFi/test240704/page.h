@@ -109,6 +109,13 @@ const char page_html[] PROGMEM = R"rawliteral(
     .idle-button:hover {
       background-color: #e03b00;
     }
+    .dropweight-button {
+      background-color: #0070ff;  /* BLU */
+      color: white;
+    }
+    .dropweight-button:hover {
+      background-color: #0050ff;
+    }
     .test-button {
       background-color: #444;  /* Light gray for better visibility */
       color: #e2e2e2;
@@ -122,6 +129,14 @@ const char page_html[] PROGMEM = R"rawliteral(
     }
     .control-button:hover {
       background-color: #444;
+    }
+    .button.toggle-off {
+      background-color: #444; /* Gray for off state */
+      color: #e2e2e2;
+    }
+    .button.toggle-on {
+      background-color: #7cfc00; /* Light green for on state */
+      color: white;
     }
     table {
       width: 100%;
@@ -226,6 +241,8 @@ const char page_html[] PROGMEM = R"rawliteral(
     <div class="status-card">
       <h2>Current State</h2>
       <p id="state">Idle</p>
+      <h2>Error message</h2>
+      <p id="errorMessage">No errors</p>
     </div>
     <div class="status-card">
       <h2>Environmental Data</h2>
@@ -289,11 +306,10 @@ const char page_html[] PROGMEM = R"rawliteral(
         <div class="loading-bar" id="loadingBar"></div>
         <div class="loading-bar-text" id="loadingBarText">0%</div>
       </div>
-      <form id="adcForm" onsubmit="sendADCValue(); return false;">
-        <label for="adcInput">Enter desired percentage (0-100):</label>
-        <input type="number" id="adcInput" name="adcInput" min="0" max="100" required>
-        <button type="submit">Set value</button>
-      </form>
+      <div class="button-container">
+        <button class="button pump-toggle" onclick="togglePump()">Toggle Pump</button>
+        <button class="button vent-toggle" onclick="toggleVent()">Open/Close Vent</button>
+      </div>
     </div>
 
     <div class="status-card">
@@ -329,6 +345,7 @@ const char page_html[] PROGMEM = R"rawliteral(
         <button class="button idle-button" onclick="enterIdle()">Idle</button>
         <button class="button initiate-dive" onclick="enterDive()">Initiate Dive</button>
         <button class="button calibrate" onclick="enterCalibration()">Calibrate</button>
+        <button class="button dropweight-button" onclick=sendMessage('Dropweight Released')">Release Dropweight</button>
       </div>
       <div class="button-container">
         <button class="button test-button" onclick="sendMessage('Test 1')">Test 1</button>
@@ -383,18 +400,95 @@ const char page_html[] PROGMEM = R"rawliteral(
       });
     }
 
-    // function sendMessage(msg) {
-    //   var xhr = new XMLHttpRequest();
-    //   xhr.open("GET", "/update?state=" + msg, true);
-    //   xhr.send();
-    // }
-  
-    // function initiateDive() {
-    //   sendMessage('Initiate Dive');
-    //   setTimeout(() => {
-    //     sendMessage('Diving');
-    //   }, 1000); // 1 second delay
-    // }
+    window.addEventListener('load', function() {
+        fetchErrorMessage();
+        setInterval(fetchErrorMessage, 5000); // Fetch every 5 seconds (adjust as needed)
+    });
+
+    function fetchErrorMessage() {
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState == XMLHttpRequest.DONE) {
+                if (xhr.status == 200) {
+                    var errorMessage = xhr.responseText.trim();
+                    if (errorMessage.length > 0) {
+                        document.getElementById('errorMessage').textContent = errorMessage;
+                    }
+                } else {
+                    console.error('Error fetching error message:', xhr.status);
+                }
+            }
+        };
+        xhr.open('GET', '/errorMessage', true); // Endpoint to fetch error message
+        xhr.send();
+    }
+
+    let pumpState = false;
+    let ventState = false;
+
+    function togglePump() {
+      pumpState = !pumpState;
+      const pumpButton = document.querySelector('.pump-toggle');
+      const pumpStateString = pumpState ? 'on' : 'off';
+
+      // Update button class based on state
+      if (pumpState) {
+        pumpButton.classList.remove('toggle-off');
+        pumpButton.classList.add('toggle-on');
+      } else {
+        pumpButton.classList.remove('toggle-on');
+        pumpButton.classList.add('toggle-off');
+      }
+
+      sendMessage('Pump ' + pumpStateString);
+      fetch('/togglePump?state=' + pumpStateString, {
+        method: 'GET',
+      })
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error('Network response was not ok');
+          }
+          return response.text();
+        })
+        .then((data) => {
+          console.log('Pump state changed:', data);
+        })
+        .catch((error) => {
+          console.error('Error:', error);
+        });
+    }
+
+    function toggleVent() {
+      ventState = !ventState;
+      const ventButton = document.querySelector('.vent-toggle');
+      const ventStateString = ventState ? 'open' : 'closed';
+
+      // Update button class based on state
+      if (ventState) {
+        ventButton.classList.remove('toggle-off');
+        ventButton.classList.add('toggle-on');
+      } else {
+        ventButton.classList.remove('toggle-on');
+        ventButton.classList.add('toggle-off');
+      }
+
+      sendMessage('Vent ' + ventStateString);
+      fetch('/toggleVent?state=' + ventStateString, {
+        method: 'GET',
+      })
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error('Network response was not ok');
+          }
+          return response.text();
+        })
+        .then((data) => {
+          console.log('Vent state changed:', data);
+        })
+        .catch((error) => {
+          console.error('Error:', error);
+        });
+    }
 
     function toggleMode() {
       document.body.classList.toggle('light-mode');
@@ -553,7 +647,7 @@ const char page_html[] PROGMEM = R"rawliteral(
           console.error('There has been a problem with your fetch operation:', error);
       });
     }
-    
+
     function sendADCValue() {
       var adcInput = document.getElementById('adcInput').value;
       fetch('/setADCValue?value=' + adcInput, {
@@ -567,6 +661,12 @@ const char page_html[] PROGMEM = R"rawliteral(
         console.error('Error:', error);
       });
     }
+
+    // function confirmDropweight() {
+    //   var confirmation = confirm("Are you sure you want to release the dropweight?");
+    //   if (confirmation) {
+    //     sendMessage('Release DROPWEIGHT');
+    //   }
 
     setInterval(fetchData, 1000); // Fetch data every second
   </script>

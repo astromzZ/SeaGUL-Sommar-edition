@@ -289,11 +289,10 @@ const char page_html[] PROGMEM = R"rawliteral(
         <div class="loading-bar" id="loadingBar"></div>
         <div class="loading-bar-text" id="loadingBarText">0%</div>
       </div>
-      <form id="adcForm" onsubmit="sendADCValue(); return false;">
-        <label for="adcInput">Enter desired percentage (0-100):</label>
-        <input type="number" id="adcInput" name="adcInput" min="0" max="100" required>
-        <button type="submit">Set value</button>
-      </form>
+      <div class="button-container">
+        <button class="button pump-toggle" onclick="togglePump()">Toggle Pump</button>
+        <button class="button vent-toggle" onclick="toggleVent()">Open/Close Vent</button>
+      </div>
     </div>
 
     <div class="status-card">
@@ -383,18 +382,50 @@ const char page_html[] PROGMEM = R"rawliteral(
       });
     }
 
-    // function sendMessage(msg) {
-    //   var xhr = new XMLHttpRequest();
-    //   xhr.open("GET", "/update?state=" + msg, true);
-    //   xhr.send();
-    // }
-  
-    // function initiateDive() {
-    //   sendMessage('Initiate Dive');
-    //   setTimeout(() => {
-    //     sendMessage('Diving');
-    //   }, 1000); // 1 second delay
-    // }
+    let pumpState = false;
+    let ventState = false;
+
+    function togglePump() {
+      pumpState = !pumpState;
+      const pumpStateString = pumpState ? 'on' : 'off';
+      sendMessage('Pump ' + pumpStateString)
+      fetch('/togglePump?state=' + pumpStateString, {
+        method: 'GET'
+      })
+      .then(response => {
+        if (!response.ok) {
+          throw new Error('Network response was not ok');
+        }
+        return response.text();
+      })
+      .then(data => {
+        console.log('Pump state changed:', data);
+      })
+      .catch(error => {
+        console.error('Error:', error);
+      });
+    }
+
+    function toggleVent() {
+      ventState = !ventState;
+      const ventStateString = ventState ? 'open' : 'closed';
+      sendMessage('Vent ' + ventStateString)
+      fetch('/toggleVent?state=' + ventStateString, {
+        method: 'GET'
+      })
+      .then(response => {
+        if (!response.ok) {
+          throw new Error('Network response was not ok');
+        }
+        return response.text();
+      })
+      .then(data => {
+        console.log('Vent state changed:', data);
+      })
+      .catch(error => {
+        console.error('Error:', error);
+      });
+    }
 
     function toggleMode() {
       document.body.classList.toggle('light-mode');
@@ -553,7 +584,30 @@ const char page_html[] PROGMEM = R"rawliteral(
           console.error('There has been a problem with your fetch operation:', error);
       });
     }
-    
+
+    // function sendADCValue() {
+    //   const adcValue = document.getElementById('adcInput').value;
+
+    //   // Validate if the input is within range (0-100)
+    //   if (adcValue < 0 || adcValue > 100) {
+    //     alert('Please enter a value between 0 and 100.');
+    //     return;
+    //   }
+
+    //   // Send the ADC value to the server
+    //   fetch('/setADCValue?value=' + adcValue, { method: 'POST' })
+    //     .then(response => {
+    //       if (!response.ok) {
+    //         throw new Error('Network response was not ok');
+    //       }
+    //       console.log('ADC Value set successfully');
+    //     })
+    //     .catch(error => console.error('Error:', error));
+
+    //   // Optional: Clear the input field after submission
+    //   document.getElementById('adcInput').value = '';
+    // }
+
     function sendADCValue() {
       var adcInput = document.getElementById('adcInput').value;
       fetch('/setADCValue?value=' + adcInput, {

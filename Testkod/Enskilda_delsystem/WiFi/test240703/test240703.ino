@@ -41,7 +41,7 @@ String currentState = "Idle";
 #define ROTATION_MIN_DEGREE -90
 #define ROTATION_MAX_DEGREE 90
 #define ROTATIONMOTOR_STEP_SIZE 1
-#define MICROSTEP 1
+#define MICROSTEP 2
 
 #include "DRV8825.h"
 #define MODE0 10
@@ -90,6 +90,10 @@ bool movingBackward = false;
 
 ICM_20948_I2C myICM;
 QueueHandle_t sensorDataQueue;
+
+int adcValue = 0;
+bool pumpState = false; // false = off, true = on
+bool ventState = false; // false = closed, true = open
 
 void steppermotor(void* pvParameters);
 void datagathering(void* pvParameters);
@@ -201,6 +205,45 @@ void handleStopMoveBackward() {
 //   Serial.print("movingBackward: ");
 //   Serial.println(movingBackward);
   server.send(200, "text/plain", "Move Backward stopped");
+}
+
+void handleSetADCValue() {
+  if (server.hasArg("value")) {
+    adcValue = server.arg("value").toInt();
+    Serial.print("ADC Value updated to: ");
+    Serial.println(adcValue);
+    server.send(200, "text/plain", "OK");
+  } else {
+    server.send(400, "text/plain", "Bad Request");
+  }
+}
+
+void handleTogglePump() {
+  if (server.hasArg("state")) {
+    String state = server.arg("state");
+    if (state == "on") {
+      pumpState = true;
+    } else if (state == "off") {
+      pumpState = false;
+    }
+    server.send(200, "text/plain", "Pump state: " + state);
+  } else {
+    server.send(400, "text/plain", "Bad Request");
+  }
+}
+
+void handleToggleVent() {
+  if (server.hasArg("state")) {
+    String state = server.arg("state");
+    if (state == "open") {
+      ventState = true;
+    } else if (state == "closed") {
+      ventState = false;
+    }
+    server.send(200, "text/plain", "Pump state: " + state);
+  } else {
+    server.send(400, "text/plain", "Bad Request");
+  }
 }
 
 // Function to generate random number
@@ -346,6 +389,9 @@ void setup() {
   server.on("/stopRotateRight", handleStopRotateRight);
   server.on("/stopMoveForward", handleStopMoveForward);
   server.on("/stopMoveBackward", handleStopMoveBackward);
+  server.on("/setADCValue", handleSetADCValue);  // Add this line
+  server.on("/togglePump", handleTogglePump);
+  server.on("/toggleVent", handleToggleVent);
   
   server.begin();
   Serial.println("HTTP server started");
@@ -534,100 +580,21 @@ void steppermotor(void* pvParameters) {
     SensorData receivedData;
     if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY) == pdTRUE) {
 
-      switch(gliderState) {
-
-        case Idle:
-          if (isIdle) {
-            // Serial.println("Idle");
-
-            // It is now possible to manually move the motors.
-
-            if (movingForward) {
-                transl_direction = 1;
-
-                if (!translationmotorRunning) {
-                    digitalWrite(TRAN_SLEEP_PIN, HIGH);
-                    translationmotorRunning = true;
-                }
-
-                controlTranslationMotor(transl_direction, currentPosition, translationmotorRunning);
-            } else {
-                if (translationmotorRunning) {
-                    digitalWrite(TRAN_SLEEP_PIN, LOW);
-                    translationmotorRunning = false;
-                }
-            }
-
-            if (movingBackward) {
-                transl_direction = -1;
-
-                if (!translationmotorRunning) {
-                    digitalWrite(TRAN_SLEEP_PIN, HIGH);
-                    translationmotorRunning = true;
-                }
-
-                controlTranslationMotor(transl_direction, currentPosition, translationmotorRunning);
-
-            } else {
-              if (translationmotorRunning) {
-                  digitalWrite(TRAN_SLEEP_PIN, LOW);
-                  translationmotorRunning = false;
-              }
-            }
-          }
+        // Serial.print(F("Roll:"));
+        // Serial.print(receivedData.roll, 1);
+        // Serial.print(F(" Pitch:"));
+        // Serial.print(receivedData.pitch, 1);
+        // Serial.print(F(" Yaw:"));
+        // Serial.println(receivedData.yaw, 1);
+        // Serial.print(F("Current Position:"));
+        // Serial.print(currentPosition, 1); 
+        Serial.print(F("Pump state:"));
+        Serial.println(pumpState);
+        Serial.print(F(" Vent state:"));
+        Serial.println(ventState);
+        Serial.print(F(" Input value:"));
+        Serial.println(adcValue);
           
-          break;
-
-
-        case Diving:
-
-          if (isDiving) {
-            float pitchSP = 0;
-
-            Serial.print(F("Roll:"));
-            Serial.print(receivedData.roll, 1);
-            Serial.print(F(" Pitch:"));
-            Serial.print(receivedData.pitch, 1);
-            Serial.print(F(" Yaw:"));
-            Serial.println(receivedData.yaw, 1);
-            Serial.print(F("Current Position:"));
-            Serial.println(currentPosition, 1); 
-
-            moveTranslationMotor(receivedData, currentPosition, pitchSP, translationmotorRunning);
-          }
-
-          break;
-
-        case Calibrating:
-          if (isCalibrating) {
-            Serial.println("Calibrating");
-
-            currentPosition = 0;
-            currentDegree = 0;
-
-            delay(1000);
-
-            Serial.println("Calibration done, going into Idle mode");
-
-            isIdle = true;
-            isCalibrating = false;
-            gliderState = Idle;
-          } 
-
-          break; 
-
-        // case GlidingDown:
-          
-        //     break;
-        
-        // case GlidingUp:
-
-        //     break;
-
-      }
-
-    // Yield to allow other tasks to run
-    vTaskDelay(pdMS_TO_TICKS(100));
     }
   }
 }

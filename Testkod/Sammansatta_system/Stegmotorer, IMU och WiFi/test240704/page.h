@@ -289,11 +289,6 @@ const char page_html[] PROGMEM = R"rawliteral(
         <div class="loading-bar" id="loadingBar"></div>
         <div class="loading-bar-text" id="loadingBarText">0%</div>
       </div>
-      <form id="adcForm" onsubmit="sendADCValue(); return false;">
-        <label for="adcInput">Enter desired percentage (0-100):</label>
-        <input type="number" id="adcInput" name="adcInput" min="0" max="100" required>
-        <button type="submit">Set value</button>
-      </form>
     </div>
 
     <div class="status-card">
@@ -551,20 +546,6 @@ const char page_html[] PROGMEM = R"rawliteral(
       })
       .catch(error => {
           console.error('There has been a problem with your fetch operation:', error);
-      });
-    }
-    
-    function sendADCValue() {
-      var adcInput = document.getElementById('adcInput').value;
-      fetch('/setADCValue?value=' + adcInput, {
-        method: 'GET'
-      })
-      .then(response => response.text())
-      .then(data => {
-        console.log(data);
-      })
-      .catch(error => {
-        console.error('Error:', error);
       });
     }
 
