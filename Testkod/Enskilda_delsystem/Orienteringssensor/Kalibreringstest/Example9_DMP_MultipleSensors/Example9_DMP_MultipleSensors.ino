@@ -35,7 +35,7 @@ ICM_20948_I2C myICM; // Otherwise create an ICM_20948_I2C object
 // gyro offset values for calibration
 long gyro[3] = {0};
 int offset_count = 500; //average this many values for gyro
-int acc_mag_count = 300; //collect this many values for acc/mag calibration
+int acc_mag_count = 1000; //collect this many values for acc/mag calibration
 
 void setup()
 {
