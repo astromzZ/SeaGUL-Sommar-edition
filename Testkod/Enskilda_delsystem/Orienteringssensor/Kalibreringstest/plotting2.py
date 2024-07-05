@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
 # 1. File Path
-file_path = "your_data_file.txt"  # Replace with the correct path
+file_path = "Testkod\Enskilda_delsystem\Orienteringssensor\Kalibreringstest\Example9_DMP_MultipleSensors\data.txt"  # Replace with the correct path
 
 # 2. Read Data with Pandas (Assuming space-separated values and no header)
 data = pd.read_csv(file_path, sep=",", header=None, names=["X", "Y", "Z"])
