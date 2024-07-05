@@ -20,7 +20,8 @@
 #define SPI_PORT SPI // Your desired SPI port.       Used only when "USE_SPI" is defined
 #define CS_PIN 2     // Which pin you connect CS to. Used only when "USE_SPI" is defined
 
-#define WIRE_PORT Wire // Your desired Wire port.      Used when "USE_SPI" is not defined
+#define SDA_PIN 13    // Which pin you connect SDA to. Used only when "USE_SPI" is not defined
+#define SCL_PIN 14    // Which pin you connect SCL to. Used only when "USE_SPI" is not defined
 #define AD0_VAL 1      // The value of the last bit of the I2C address.                \
   // On the SparkFun 9DoF IMU breakout the default is 1, and when \
   // the ADR jumper is closed the value becomes 0
@@ -47,8 +48,8 @@ void setup()
 #ifdef USE_SPI
   SPI_PORT.begin();
 #else
-  WIRE_PORT.begin();
-  WIRE_PORT.setClock(400000);
+  Wire.begin(SDA_PIN, SCL_PIN);
+  Wire.setClock(400000);
 #endif
 
   //myICM.enableDebugging(); // Uncomment this line to enable helpful debug messages on Serial
@@ -60,7 +61,7 @@ void setup()
 #ifdef USE_SPI
     myICM.begin(CS_PIN, SPI_PORT);
 #else
-    myICM.begin(WIRE_PORT, AD0_VAL);
+    myICM.begin(Wire, AD0_VAL);
 #endif
 
     SERIAL_PORT.print(F("Initialization of the sensor returned: "));
@@ -102,6 +103,8 @@ void setup()
   SERIAL_PORT.println(F("Turn sensor SLOWLY and STEADILY in all directions until done"));
   delay(5000);
   SERIAL_PORT.println(F("Starting..."));
+
+  myICM.startupMagnetometer(); // Start up the magnetometer
 
   // get values for calibration of acc/mag
   for (i = 0; i < acc_mag_count; i++) {
