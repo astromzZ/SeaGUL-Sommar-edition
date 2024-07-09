@@ -42,8 +42,8 @@ def ellipsoid_error(params, data):
     return np.sum((np.linalg.norm(transformed_data, axis=1) - 1) ** 2)
 
 # Iterative Filtering, Centering, and Fitting
-max_iterations = 2
-threshold = 2  # Z-score threshold for filtering
+max_iterations = 3
+threshold = 2.5  # Z-score threshold for filtering
 filtered_data = data_combined
 
 for iteration in range(max_iterations):
@@ -81,10 +81,14 @@ X_final = data_final[:, 0]
 Y_final = data_final[:, 1]
 Z_final = data_final[:, 2]
 
+# Create the corrected data with offset subtracted and divided by scale
+corrected_data = (data_combined - center) / radii
+
 # Plotting the calibrated data with projections
-fig = plt.figure(figsize=(14, 7))
-ax1 = fig.add_subplot(121, projection='3d')
-ax2 = fig.add_subplot(122, projection='3d')
+fig = plt.figure(figsize=(21, 7))
+ax1 = fig.add_subplot(131, projection='3d')
+ax2 = fig.add_subplot(132, projection='3d')
+ax3 = fig.add_subplot(133, projection='3d')
 
 # Plot the calibrated 3D data
 ax1.scatter(X_final, Y_final, Z_final, c='black', marker='o', label='Calibrated 3D Data')
@@ -113,6 +117,20 @@ ax2.set_zlabel('Z')
 ax2.set_title('Original 3D Scatter Plot with Projections')
 ax2.legend()
 ax2.grid(True)
+
+# Plot the corrected 3D data
+ax3.scatter(corrected_data[:, 0], corrected_data[:, 1], corrected_data[:, 2], c='black', marker='o', label='Corrected 3D Data')
+ax3.scatter(corrected_data[:, 0], corrected_data[:, 1], -np.max(corrected_data[:, 2]) - 1, c='red', marker='o', alpha=0.6, label='XY Plane Projection')
+ax3.scatter(corrected_data[:, 0], np.max(corrected_data[:, 1]) + 1, corrected_data[:, 2], c='blue', marker='o', alpha=0.6, label='XZ Plane Projection')
+ax3.scatter(np.max(corrected_data[:, 0]) + 1, corrected_data[:, 1], corrected_data[:, 2], c='green', marker='o', alpha=0.6, label='YZ Plane Projection')
+
+# Set labels and title
+ax3.set_xlabel('X')
+ax3.set_ylabel('Y')
+ax3.set_zlabel('Z')
+ax3.set_title('Corrected 3D Scatter Plot with Projections')
+ax3.legend()
+ax3.grid(True)
 
 plt.show()
 
