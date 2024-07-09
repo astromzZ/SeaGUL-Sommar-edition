@@ -21,36 +21,32 @@ X = data["X"]
 Y = data["Y"]
 Z = data["Z"]
 
-# Create Figure and Subplots 
-fig = plt.figure(figsize=(15, 5))  # Wider figure for clearer projections
+# Create Figure and 3D Axes
+fig = plt.figure(figsize=(10, 7))  # Adjust the figure size if needed
+ax = fig.add_subplot(111, projection='3d')
 
-# 3D Scatter Plot (Main Plot)
-ax = fig.add_subplot(131, projection='3d')  
-ax.scatter(X, Y, Z, c='purple', marker='o', label='3D Data')
-ax.set_xlabel('X Label')
-ax.set_ylabel('Y Label')
-ax.set_zlabel('Z Label')
-ax.set_title('3D Scatter Plot')
+# Plot the 3D data
+ax.scatter(X, Y, Z, c='black', marker='o', label='3D Data')
+
+# Plot the XY plane projection
+ax.scatter(X, Y, -500, c='red', marker='o', alpha=0.6, label='XY Plane Projection')
+
+# Plot the XZ plane projection
+ax.scatter(X, [300]*len(Y), Z, c='blue', marker='o', alpha=0.6, label='XZ Plane Projection')
+
+# Plot the YZ plane projection
+ax.scatter([300]*len(X), Y, Z, c='green', marker='o', alpha=0.6, label='YZ Plane Projection')
+
+# Set labels and title
+ax.set_xlabel('X')
+ax.set_ylabel('Y')
+ax.set_zlabel('Z')
+ax.set_title('3D Scatter Plot with Projections')
+
+# Add legend
 ax.legend()
 
-# XY Plane Projection
-ax1 = fig.add_subplot(132, projection='3d')
-ax1.scatter(X, Y, 0, c='r', marker='o')
-ax1.scatter(X, Y, Z, c='purple', marker='o', alpha=0.2)  # Show 3D points faintly
-ax1.set_xlabel('X Label')
-ax1.set_ylabel('Y Label')
-ax1.set_zlabel('Z Label')
-ax1.set_title('XY Plane Projection')
+# Show grid
+ax.grid(True)
 
-# XZ Plane Projection
-ax2 = fig.add_subplot(133, projection='3d')
-ax2.scatter(X, 0, Z, c='b', marker='o')
-ax2.scatter(X, Y, Z, c='purple', marker='o', alpha=0.2)  # Show 3D points faintly
-ax2.set_xlabel('X Label')
-ax2.set_ylabel('Y Label')
-ax2.set_zlabel('Z Label')
-ax2.set_title('XZ Plane Projection')
-
-
-plt.tight_layout()
 plt.show()
