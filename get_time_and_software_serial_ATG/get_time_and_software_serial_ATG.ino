@@ -282,7 +282,7 @@ void loop()
     delay(100); // Small delay between prints so that we can detect incoming chars if any
 }
 
-#if DIAGNOSTICS
+#if DIAGNOSTICSf
 void ISBDConsoleCallback(IridiumSBD *device, char c)
 {
   Serial.write(c);
