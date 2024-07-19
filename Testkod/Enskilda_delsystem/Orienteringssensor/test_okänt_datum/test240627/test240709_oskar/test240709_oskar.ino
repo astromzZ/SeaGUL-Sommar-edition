@@ -11,8 +11,8 @@
 ICM_20948_I2C myICM;
 
 // Calibration parameters (Replace these with your actual calibration values)
-float hard_iron_offset[3] = {0.04735881, -0.08549058, -0.08440052};
-float soft_iron_scale[3] = {6.61110144, 2.7004145, 1.38958469};
+float hard_iron_offset[3] = {0, 0, 0};
+float soft_iron_scale[3] = {1, 1, 1};
 
 void setup()
 {
@@ -149,7 +149,7 @@ void loop()
                 float heading = atan2(calibratedMag[1], calibratedMag[0]) * 180.0 / PI;
                 if (heading < 0)
                 {
-                    heading += 0; //360
+                    heading += 360;
                 }
 
 #ifndef QUAT_ANIMATION
