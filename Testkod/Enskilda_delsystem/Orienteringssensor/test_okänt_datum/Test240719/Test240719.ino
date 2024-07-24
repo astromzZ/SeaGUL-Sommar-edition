@@ -44,19 +44,17 @@ void setup()
 void loop()
 {
   myICM.getAGMT();
-  float ax = -myICM.accX() * 0.001 + 0.000;  // these offsets calibrate MY sensor, YOUR sensor needs different offsets
-  float ay =  myICM.accY() * 0.001 + 0.010;
-  float az = -myICM.accZ() * 0.001 + 0.040;
-  float gx = -myICM.gyrX()         - 0.400;
-  float gy =  myICM.gyrY()         - 0.730;
-  float gz = -myICM.gyrZ()         + 0.300;
-  float mx = -myICM.magX()         -  5.00;
-  float my = -myICM.magY()         -  2.50;
-  float mz =  myICM.magZ()         -  9.50;
+  float ax = -myICM.accX() * 0.00 + 0.000;  // these offsets calibrate MY sensor, YOUR sensor needs different offsets
+  float ay =  myICM.accY() * 0.00 + 0.00;
+  float az = -myICM.accZ() * 0.00 + 0.00;
+  float gx = -myICM.gyrX()         - 0.00;
+  float gy =  myICM.gyrY()         - 0.00;
+  float gz = -myICM.gyrZ()         + 0.00;
+  float mx = -myICM.magX()         -  0.00;
+  float my = -myICM.magY()         -  0.00;
+  float mz =  myICM.magZ()         -  0.00;
 
- filter.update(gx, -gy, -gz,
-              -accel_event.acceleration.x, accel_event.acceleration.y, accel_event.acceleration.z,
-              mx, my, mz);  // gyro deg/sec, acc and mag don't care
+  filter.update(gx, gy, gz, -ax, -ay, -az, mx, my, mz);  // gyro deg/sec, acc and mag don't care
   float roll    = filter.getRoll();
   float pitch   = filter.getPitch();
   float heading = filter.getYaw() + 180;  // it pointed the wrong way, the 180 fixed it
