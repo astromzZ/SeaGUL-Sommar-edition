@@ -35,7 +35,7 @@ The code should be able to handle GPS positioning, Iridium messaging, serial con
 SoftwareSerial mySerial(D5, D6); // RX, TX - Any pins can be used, we use D5 and D6 (SCK, CIPO) see schematic: https://github.com/sparkfun/SparkFun_Artemis_Global_Tracker/blob/main/Documentation/SparkFun_Artemis_Global_Tracker_SCHEMATIC_v10.pdf 
 
 #include <Wire.h>
-TwoWire agtWire(9,8); //Create an I2C port using pads 8 (SCL) and 9 (SDA)
+// TwoWire agtWire(9,8); //Create an I2C port using pads 8 (SCL) and 9 (SDA)
 //TwoWire qwiic(40,39); //Will use Artemis pads 39 (SCL) and 40 (SDA), activate if the quiic port is to be used
 
 #include <SparkFun_PHT_MS8607_Arduino_Library.h> //http://librarymanager/All#SparkFun_MS8607 The MS8607 is connected to I2C Port 1: SCL = D8; SDA = D9
