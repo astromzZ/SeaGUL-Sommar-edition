@@ -798,7 +798,7 @@ void glidercontrol(void* pvParameters) {
 
                 case Diving: //This case activates when the Initiate Dive button is pressed on the SeaGUL webpage.
 
-                    Serial.println("Gliderstate: " + gliderState);
+                    Serial.println("Gliderstate: " + String(gliderState));
 
                     //Check if the pump or valve pins are high. If they are, set them to low.
                     if (pumpPinState == HIGH) {
