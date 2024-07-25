@@ -19,13 +19,15 @@
 #define ROT_SLEEP_PIN       18 //Rotation motor sleep pin
 #define SDA_PIN             13 //SDA pin for I2C communication
 #define SCL_PIN             14 //SCL pin for I2C communication
-#define MODE0               10 //Microstepping mode pin 0
-#define MODE1               11 //Microstepping mode pin 1
-#define MODE2               12 //Microstepping mode pin 2
-#define SOFT_POT_PIN         2 //Pin connected to softpot wiper
+// #define MODE0               10 //Microstepping mode pin 0
+// #define MODE1               11 //Microstepping mode pin 1
+// #define MODE2               12 //Microstepping mode pin 2
+#define SOFT_POT_PIN         4 //Pin connected to softpot wiper
 #define PUMP_PIN             5 //Pin connected to pump
-#define VALVE_PIN            6 //Pin connected to valve
-#define DROPWEIGHT_PIN       4 //Pin connected to dropweight
+#define VALVE_PIN            6 //Pin connected to valve 
+#define DROPWEIGHT_PIN       2 //Pin connected to dropweight
+#define BAT_VOLTAGE_PIN     10 //Pin connected to bat voltage
+#define BAT_VOLTAGE_MONITOR_PIN 11 //Pin connected to bat voltage monitor
 
 //.............................................................................
 
@@ -49,8 +51,8 @@
 
 #define MICROSTEP 2 //Microstepping value
 
-DRV8825 transtepper(stepsPerRevolution, TRAN_DIR_PIN, TRAN_STEP_PIN, TRAN_SLEEP_PIN, MODE0, MODE1, MODE2);  //Create an instance of the stepper motor driver for the translation motor
-DRV8825 rotstepper(stepsPerRevolution, ROT_DIR_PIN, ROT_STEP_PIN, ROT_SLEEP_PIN, MODE0, MODE1, MODE2); //Create an instance of the stepper motor driver for the rotation motor
+DRV8825 transtepper(stepsPerRevolution, TRAN_DIR_PIN, TRAN_STEP_PIN, TRAN_SLEEP_PIN);  //Create an instance of the stepper motor driver for the translation motor
+DRV8825 rotstepper(stepsPerRevolution, ROT_DIR_PIN, ROT_STEP_PIN, ROT_SLEEP_PIN); //Create an instance of the stepper motor driver for the rotation motor
 
 //.............................................................................
 
@@ -86,6 +88,9 @@ float nextPosition = 0;
 float nextDegree = 0;
 
 unsigned long stateStartMillis = 0; // Variable to store the start time of the states GlidingDown and GlidingUp
+
+float Vbat = 30.0; // Variable to store the battery voltage
+#define V_LOW 29.0 // Low battery voltage threshold
 
 // Struct to hold sensor data
 struct SensorData {
@@ -324,6 +329,16 @@ void handleData() {
   server.send(200, "application/json", json);
 }
 
+void getVBat() {
+  digitalWrite(BAT_VOLTAGE_MONITOR_PIN, HIGH); // Enable the voltage monitor
+
+  delay(100); // Wait for the voltage to stabilize
+  // Read the battery voltage
+  Vbat = ((float)analogRead(BAT_VOLTAGE_PIN)) * 12 * 3.3 / 4095; // Convert the analog reading to voltage 10/120
+
+  digitalWrite(BAT_VOLTAGE_MONITOR_PIN, LOW); // Disable the voltage monitor
+}
+
 void setup() {
     Serial.begin(115200);
 
@@ -346,6 +361,27 @@ void setup() {
 
     Wire.begin(SDA_PIN, SCL_PIN);
     Wire.setClock(400000);
+
+    while (!Serial) // Wait for the user to open the serial monitor
+      ;
+    delay(100);
+    Serial.println();
+    Serial.println();
+    Serial.println(F("REVERE Glider SeaGUL"));
+    Serial.println(F("Monterat test"));
+    Serial.println();
+
+    //empty the serial buffer
+    while(Serial.available() > 0)
+      Serial.read();
+
+    //wait for the user to press any key before beginning
+    Serial.println(F("Please check that the Serial Monitor is set to 115200 Baud"));
+    Serial.println(F("and that the line ending is set to Newline."));
+    Serial.println(F("Then click Send to start the test."));
+    Serial.println();
+    while(Serial.available() == 0)
+      ;
 
     bool initialized = false;
     while (!initialized) {
@@ -762,6 +798,8 @@ void glidercontrol(void* pvParameters) {
 
                 case Diving: //This case activates when the Initiate Dive button is pressed on the SeaGUL webpage.
 
+                    Serial.println("Gliderstate: " + gliderState);
+
                     //Check if the pump or valve pins are high. If they are, set them to low.
                     if (pumpPinState == HIGH) {
                       digitalWrite(PUMP_PIN, LOW);
@@ -799,6 +837,8 @@ void glidercontrol(void* pvParameters) {
                     break;
 
                 case GlidingDown:
+
+                    Serial.println("Gliderstate: " + gliderState); 
 
                     //Reset flag, warning count and timer
                     glideUpReservoirEmpty = false;
@@ -893,6 +933,8 @@ void glidercontrol(void* pvParameters) {
                 
                 case GlidingUp:
 
+                    Serial.println("Gliderstate: " + gliderState); 
+
                     warningCount = 0;
                     previousTime = 0;
 
@@ -925,7 +967,7 @@ void glidercontrol(void* pvParameters) {
                         if (Serial.available() > 0) {
                           char incomingChar = Serial.read();
                           if (incomingChar == 'dive') {
-                            Serial.println("Surface reached, moving to Idle state.");
+                            Serial.println("Surface reached, moving to surface or dive state. Dive number: " + n_dyk);
 
                             //Since a dive is complete we add 1 to the number of dives.
                             if (!dykcount) {
@@ -992,6 +1034,8 @@ void glidercontrol(void* pvParameters) {
                     break;
 
                 case Surface:
+              
+                    Serial.println("Gliderstate: " + gliderState); 
 
                     pitchSP = -20; // Setpoint for pitch, we want the antenna to be above the water.
                     rollSP = 0; // Setpoint for roll
@@ -1029,6 +1073,9 @@ void glidercontrol(void* pvParameters) {
                     break;
 
                 case DropWeight:
+
+                    Serial.println("Gliderstate: " + gliderState); 
+
                     Serial.println("Releasing weight...");
 
                     //Check if the pump or valve pins are high. If they are, set them to low.
