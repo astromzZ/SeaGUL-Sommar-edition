@@ -265,6 +265,26 @@ void setup() {
   Wire.begin(SDA_PIN, SCL_PIN);
   Wire.setClock(400000);
 
+  while (!Serial) // Wait for the user to open the serial monitor
+    ;
+  delay(100);
+  Serial.println();
+  Serial.println();
+  Serial.println(F("REVERE Glider SeaGUL"));
+  Serial.println(F("test240701.ino"));
+  Serial.println();
+
+  //empty the serial buffer
+  while(Serial.available() > 0)
+    Serial.read();
+
+  //wait for the user to press any key before beginning
+  Serial.println(F("Please check that the Serial Monitor is set to 115200 Baud"));
+  Serial.println(F("Then click Send to start the test."));
+  Serial.println();
+  while(Serial.available() == 0)
+    ;
+
   bool initialized = false;
   while (!initialized) {
       myICM.begin(Wire, AD0_VAL);
@@ -286,6 +306,8 @@ void setup() {
   // success &= (myICM.setDMPODRrate(DMP_ODR_Reg_Quat6, 0) == ICM_20948_Stat_Ok);
     // Enable the FIFO
   success &= (myICM.enableFIFO() == ICM_20948_Stat_Ok);
+
+  success &= (myICM.setFIFOmode(true) == ICM_20948_Stat_Ok);
 
   // Enable the DMP
   success &= (myICM.enableDMP() == ICM_20948_Stat_Ok);
@@ -634,11 +656,12 @@ void steppermotor(void* pvParameters) {
 
 void datagathering(void* pvParameters) {
   while (true) {
+      SensorData data;
       icm_20948_DMP_data_t IMUdata;
       myICM.readDMPdataFromFIFO(&IMUdata);
 
     if ((myICM.status == ICM_20948_Stat_Ok) || (myICM.status == ICM_20948_Stat_FIFOMoreDataAvail)) {
-        SensorData data;
+ 
         // myICM.getAGMT(); // The values are only updated when you call 'getAGMT'
 
         if ((IMUdata.header & DMP_header_bitmap_Quat6) > 0) {
@@ -694,18 +717,22 @@ void datagathering(void* pvParameters) {
 
           // float temperature = Tsensor.temperature(); 
 
-          // String logData = "Pitch: " + String(data.pitch * 180 / PI) + " degrees, " +
-          //                  "Roll: " + String(data.roll * 180 / PI) + " degrees, ";
-                          //  "Depth: " + String(data.depth) + " m, " +
-                          //  "Pressure: " + String(data.pressure) + " mbar, " +
-                          //  "Temperature: " + String(temperature) + " Celsius";
-                          //  "Current: " + String(current) + " A";
+
           // writeSD(logData);
+
         }
+
 
     // } else {
     //     Serial.println("Sensor data not ready");
     }
+
+
+    delay(20);
+    String logData = "Pitch: " + String(data.pitch) + " degrees, " +
+                      "Roll: " + String(data.roll) + " degrees, ";
+    Serial.println(logData);
+
     vTaskDelay(pdMS_TO_TICKS(10)); // Adding a delay to reduce bus congestion and improve stability
   }
 }

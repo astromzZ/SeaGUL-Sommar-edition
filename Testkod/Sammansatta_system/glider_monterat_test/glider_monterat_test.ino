@@ -104,6 +104,11 @@ struct SensorData {
 };
 QueueHandle_t sensorDataQueue; // Queue to hold sensor data
 
+float lastconductivityreading = 0; // Variable to store the conductivity
+bool readingConductivity = false; // Flag to indicate if the conductivity is being read
+uint32_t next_ECread_time = 0;        
+
+
 // Enum to keep track of the state of the glider
 enum GliderState {
     Idle,
@@ -134,6 +139,15 @@ ICM_20948_I2C myICM;
 OpenLog myLog;
 String fileName = "SD-test10_240612.txt"; //Name of the file that the data will be stored in
 
+// Salinity sensor
+#include <Ezo_i2c.h>
+#include <sequencer2.h>
+#include <Ezo_i2c_util.h>
+
+// Ezo_board PH = Ezo_board(99, "PH");       //create a PH circuit object, who's address is 99 and name is "PH"
+Ezo_board EC = Ezo_board(100, "EC");      //create an EC circuit object who's address is 100 and name is "EC"
+
+
 //.............................................................................
 
 // Function prototypes
@@ -148,7 +162,9 @@ void writeSD(String measurement) {
   myLog.println(measurement); //Skriver till filen
   myLog.syncFile();
 }
-
+// void sequencerstep1();  //forward declarations of functions to use them in the sequencer before defining them
+// void sequencerstep2();
+// Sequencer2 Seq(&sequencerstep1, 1000, &sequencerstep2, 0);  //calls the steps in sequence with time in between them
 //.............................................................................
 
 //NETWORKING
@@ -348,16 +364,18 @@ void setup() {
     rotstepper.enable();
 
     pinMode(TRAN_SLEEP_PIN, OUTPUT);
+    digitalWrite(TRAN_SLEEP_PIN, LOW);
     pinMode(TRAN_DIR_PIN, OUTPUT);
     pinMode(ROT_SLEEP_PIN, OUTPUT);
+    digitalWrite(ROT_SLEEP_PIN, LOW);
     pinMode(ROT_DIR_PIN, OUTPUT);
-
     pinMode(SOFT_POT_PIN, INPUT);
-
     pinMode(PUMP_PIN, OUTPUT);
+    digitalWrite(PUMP_PIN, LOW);
     pinMode(VALVE_PIN, OUTPUT);
-
-    pinMode(DROPWEIGHT_PIN, OUTPUT);
+    digitalWrite(VALVE_PIN, LOW);
+    pinMode(DROPWEIGHT_PIN, OUTPUT); 
+    digitalWrite(DROPWEIGHT_PIN, LOW);
 
     Wire.begin(SDA_PIN, SCL_PIN);
     Wire.setClock(400000);
@@ -377,11 +395,11 @@ void setup() {
 
     //wait for the user to press any key before beginning
     Serial.println(F("Please check that the Serial Monitor is set to 115200 Baud"));
-    Serial.println(F("and that the line ending is set to Newline."));
     Serial.println(F("Then click Send to start the test."));
     Serial.println();
     while(Serial.available() == 0)
       ;
+
 
     bool initialized = false;
     while (!initialized) {
@@ -403,6 +421,9 @@ void setup() {
     // success &= (myICM.setDMPODRrate(DMP_ODR_Reg_Quat6, 0) == ICM_20948_Stat_Ok);
         // Enable the FIFO
     success &= (myICM.enableFIFO() == ICM_20948_Stat_Ok);
+
+    // Set the FIFO mode to snapshot mode
+    success &= (myICM.setFIFOmode(true) == ICM_20948_Stat_Ok);
 
     // Enable the DMP
     success &= (myICM.enableDMP() == ICM_20948_Stat_Ok);
@@ -441,10 +462,12 @@ void setup() {
         return;
     }
 
+    // Seq.reset(); //reset the sequencer
+
     xTaskCreatePinnedToCore(
         datagathering,                       // Function to implement the task
         "Measurement and storing of data",   // Name of the task
-        2048,                                // Stack size in bytes
+        4096,                                // Stack size in bytes
         NULL,                                // Task input parameter
         1,                                   // Priority of the task
         NULL,                                // Task handle.
@@ -454,7 +477,7 @@ void setup() {
     xTaskCreatePinnedToCore(
         glidercontrol,                      // Function to implement the task
         "descision making for glider",      // Name of the task
-        2048,                               // Stack size in bytes
+        4096,                               // Stack size in bytes
         NULL,                               // Task input parameter
         1,                                  // Priority of the task
         NULL,                               // Task handle.
@@ -702,481 +725,588 @@ void controlTranslationMotor (float &translation_direction, float &currentPositi
   }
 }
 
-void glidercontrol(void* pvParameters) {
-    bool translationmotorRunning = false;
-    bool rotationmotorRunning = false;
-    bool glideDownReservoirFull = false;
-    bool glideUpReservoirEmpty = false;
-    bool dropweightReleased = false;
-    bool dykcount = false;
-    float currentPosition = 0;
-    float currentDegree = 0;
-    float pitchSP = 0;
-    float rollSP = 0;
-    unsigned long glideDownTime = 0;
-    unsigned long glideUpTime = 0;
-    int valePinState = digitalRead(VALVE_PIN);
-    int pumpPinState = digitalRead(PUMP_PIN);
-
-    float previousDepth = 0; // Variable to store the previous depth
-    unsigned long previousTime = 0; // Variable to store the previous time
-    const unsigned long ONE_HOUR = 3600000; // 1 hour in milliseconds, used to check if the glider has been going down/up for too long
-    const unsigned long sampleInterval = 10000; //Interval to sample the depth (in milliseconds)
-    unsigned int warningCount = 0; // Variable to keep track of the number of warnings
-    bool warningFlag = false; // Flag to indicate if a warning has been issued
-    bool previousTimeSet = false; // Flag to indicate if the previous time has been set when Down/Up states shift
-
-    SensorData receivedData;
-
-    while (true) {
-      unsigned long currentMillis = millis(); //Holds the current time the program has been running in milliseconds
-        if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
-
-            //ToDo:
-            // 1.
-            // Add checks when transitioning between states to ensure that the motor/valve/pump are not continuing to run.
-            // If they are, stop them before transitioning to the next state. 
-            //
-            // 2. 
-            // Add checks to ensure that the glider is not moving in the wrong direction. So that when it is supposed to move up, it is not moving down.
-            // 
-            // 3. 
-            // Add communication with AGT 
-            //
-            // 4. 
-            // 
-            
-
-            switch (gliderState) { //Not sure if this should be outside xQueueReceive or not.
-
-                case Idle: //This case is for when the glider is not doing anything. Activated via button on SeaGUL webpage.
-
-                    //Check if the pump or valve pins are high. If they are, set them to low.
-                    if (pumpPinState == HIGH) {
-                      digitalWrite(PUMP_PIN, LOW);
-                    }
-                    if (valePinState == HIGH) {
-                      digitalWrite(VALVE_PIN, LOW);
-                    }
-
-                    //It is now possible to move the stepper motors manually through the SeaGUL webpage.
-                    if (movingForward) {
-                        float translation_direction = 1; // 1 = forward, -1 = backward
-
-                        if (!translationmotorRunning) { //Start the motor if it is not already running
-                            digitalWrite(TRAN_SLEEP_PIN, HIGH);
-                            translationmotorRunning = true;
-                        }
-
-                        controlTranslationMotor(translation_direction, currentPosition, translationmotorRunning); //Move the motor
-
-                    } else {
-                        if (translationmotorRunning) { //Stop the motor
-                            digitalWrite(TRAN_SLEEP_PIN, LOW);
-                            translationmotorRunning = false;
-                        }
-                    }
-
-                    if (movingBackward) {
-                        float translation_direction = -1; // 1 = forward, -1 = backward
-
-                        if (!translationmotorRunning) { //Start the motor if it is not already running
-                            digitalWrite(TRAN_SLEEP_PIN, HIGH);
-                            translationmotorRunning = true;
-                        }
-
-                        controlTranslationMotor(translation_direction, currentPosition, translationmotorRunning); //Move the motor
-
-                    } else {
-                      if (translationmotorRunning) { //Stop the motor
-                          digitalWrite(TRAN_SLEEP_PIN, LOW);
-                          translationmotorRunning = false;
-                      }
-                    }
-
-                    break;
-
-                case Diving: //This case activates when the Initiate Dive button is pressed on the SeaGUL webpage.
-
-                    Serial.println("Gliderstate: " + String(gliderState));
-
-                    //Check if the pump or valve pins are high. If they are, set them to low.
-                    if (pumpPinState == HIGH) {
-                      digitalWrite(PUMP_PIN, LOW);
-                    }
-                    if (valePinState == HIGH) {
-                      digitalWrite(VALVE_PIN, LOW);
-                    }
-                    Serial.println("Initiating dive...");
-
-                    n_dyk = 0; //Reset the number of dives
-
-                    delay(1000);
-
-                    Serial.println("Dive initiated. Moving to GlidingDown state.");
-                    
-                    gliderState = GlidingDown;
-                    stateStartMillis = currentMillis; //Store the time the GlidingDown state started
-                    break;
-
-                case Calibrating:
-                    //Set the displacement of rotation and translation to 0. 
-                    //This should be done when the pitch and roll are indicated as 0 on the SeaGul webpage,
-                    //before being sent on a mission. 
-                    Serial.println("Calibrating...");
-
-                    currentPosition = 0;
-                    currentDegree = 0;
-                    //Future addition: Calibration of compass. 
-
-                    delay(2000);
-
-                    Serial.println("Calibration done. Returning to Idle state");
-                    gliderState = Idle;
-
-                    break;
-
-                case GlidingDown:
-
-                    Serial.println("Gliderstate: " + gliderState); 
-
-                    //Reset flag, warning count and timer
-                    glideUpReservoirEmpty = false;
-                    warningCount = 0;
-
-                    pitchSP = -20; // Setpoint for pitch
-                    rollSP = 0; // Setpoint for roll
-
-                    //Future addition: Turning motion
-    
-                    //First fill the reservoir with oil.
-                    if (!glideDownReservoirFull) {
-                        Serial.println("Opening valve and recording time");
-                        digitalWrite(VALVE_PIN, HIGH);
-
-                        if (receivedData.potentiometer >= 3500) { //When the reservoir is full we close the valve. Value is not determined yet.
-                            Serial.println("Reservoir full, closing valve.");
-                            digitalWrite(VALVE_PIN, LOW);
-                            glideDownReservoirFull = true; 
-                        }
-                    }
-
-                    //After the reservoir is full we can regulate the pitch and roll of the glider.
-                    //We can't do these simultaneously because the electrical system will be overloaded. 
-                    if (glideDownReservoirFull) {
-
-                        if (!previousTimeSet) { // Set the previous time to the current time after the reservoir is full.
-                            previousTime = currentMillis;
-                            previousTimeSet = true;
-                        }
-
-                        moveTranslationMotor(receivedData, currentPosition, pitchSP, translationmotorRunning);
-                        moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
-
-                        if (Serial.available() > 0) {
-                          char incomingChar = Serial.read();
-                          if (incomingChar == 'surface') {
-                            Serial.println("Depth reached, moving to GlidingUp state.");
-
-                            //Reset boolean from the dive down.
-                            glideDownReservoirFull = false;
-
-                            gliderState = GlidingUp;
-                            stateStartMillis = currentMillis; //Store the time the GlidingUp state started
-                            previousTimeSet = false;
-                          }
-
-                          if (incomingChar == 'dropweight') {
-                            Serial.println("Dropweight command received, moving to DropWeight state.");
-                            gliderState = DropWeight;
-                          }
-
-                        }
-
-                        //UNCOMENT THIS IF YOU WANT TO USE THE WARNING SYSTEM!
-                        // if (currentMillis - previousTime >= sampleInterval) {
-                        //   warningFlag = false;
-                        //   float depthChangeRate = (receivedData.depth - previousDepth) / ((glideDownTime - previousTime)/1000);
-                        //   previousDepth = receivedData.depth;
-                        //   previousTime = currentMillis;
-
-                        //   if (depthChangeRate > 0) {
-                            
-                        //     Serial.println("WARNING: Glider is moving upwards instead of down!");
-
-                        //     if (!warningFlag) {
-                        //       warningCount += 1;
-                        //       warningFlag = true;
-                        //     }
-
-                        //     if (warningCount >= 3) {
-                        //       Serial.println("WARNING: Glider is moving upwards instead of down! Releasing weight by moving to DropWeight state.");
-                        //       gliderState = DropWeight;
-                        //     }                            
-                        //   }
-                        // }
-                        //UNCOCMENT THIS IF YOU WANT TO USE THE WARNING SYSTEM!
-                        
-                        if (currentMillis - stateStartMillis >= ONE_HOUR) {
-                            Serial.println("To much time has passed, releasing weight by moving to DropWeight state.");
-                            gliderState = DropWeight;
-                        }
-                    }
-
-                    //Check if too much time has passed for the glider to reach its target depth.
-                    if (currentMillis - stateStartMillis >= ONE_HOUR) {
-                        Serial.println("To much time has passed, releasing weight by moving to DropWeight state.");
-                        gliderState = DropWeight;
-                    }
-
-                    break;
-                
-                case GlidingUp:
-
-                    Serial.println("Gliderstate: " + gliderState); 
-
-                    warningCount = 0;
-                    previousTime = 0;
-
-                    pitchSP = 20; // Setpoint for pitch
-                    rollSP = 0; // Setpoint for roll
-
-                    //First start the pump to empty the reservoir.
-                    if (!glideUpReservoirEmpty) {
-                        Serial.println("Starting pump and recording time");
-                        digitalWrite(PUMP_PIN, HIGH);
-
-                        if (receivedData.potentiometer <= 500) { //When the reservoir is empty we stop the pump. Value is not determined yet.
-                            Serial.println("Reservoir empty, stopping pump.");
-                            digitalWrite(PUMP_PIN, LOW);
-                            glideUpReservoirEmpty = true;
-                        }
-                    }
-
-                    //After the reservoir is empty we can regulate the pitch and roll of the glider.
-                    if (glideUpReservoirEmpty) {
-
-                        if (!previousTimeSet) { // Set the previous time to the current time after the reservoir is empty.
-                            previousTime = currentMillis;
-                            previousTimeSet = true;
-                        }
-
-                        moveTranslationMotor(receivedData, currentPosition, pitchSP, translationmotorRunning);
-                        moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
-
-                        if (Serial.available() > 0) {
-                          char incomingChar = Serial.read();
-                          if (incomingChar == 'dive') {
-                            Serial.println("Surface reached, moving to surface or dive state. Dive number: " + n_dyk);
-
-                            //Since a dive is complete we add 1 to the number of dives.
-                            if (!dykcount) {
-                                n_dyk += 1;
-                                totalNumberofDives += 1;
-                                dykcount = true; 
-                            }
-
-                            //If the number of dives is less than 3 we will continue diving by returning to the GlidingDown state.
-                            if (n_dyk < 3) {
-                                gliderState = GlidingDown;
-                                dykcount = false;
-                                stateStartMillis = currentMillis; //Store the time the GlidingDown state started
-                                previousTimeSet = false;
-                            }
-
-                            //If the number of dives is 3 or more we will move to the Surface state and reset the reservoir flag. 
-                            if (n_dyk >= 3) {
-                                gliderState = Surface;
-                                glideUpReservoirEmpty = false;
-                                dykcount = false;
-                            }
-
-                          }
-
-                          if (incomingChar == 'dropweight') {
-                            Serial.println("Dropweight command received, moving to DropWeight state.");
-                            gliderState = DropWeight;
-                          }
-
-                        }
-
-                        //UNCOMENT THIS IF YOU WANT TO USE THE WARNING SYSTEM!
-                        // if (currentMillis - previousTime >= sampleInterval) {
-                        //   warningFlag = false;
-                        //   float depthChangeRate = (receivedData.depth - previousDepth) / ((millis() - previousTime)/1000);
-                        //   previousDepth = receivedData.depth;
-                        //   previousTime = currentMillis;
-
-                        //   if (depthChangeRate < 0) {
-
-                        //     Serial.println("WARNING: Glider is moving downwards instead of up!");
-
-                        //     if(!warningFlag) {
-                        //       warningCount += 1;
-                        //       warningFlag = true;
-                        //     }
-                            
-                        //     if (warningCount >= 3) {
-                        //       Serial.println("WARNING: Glider is moving downwards instead of up! Releasing weight by moving to DropWeight state.");
-                        //       gliderState = DropWeight;
-                        //     }
-                        //   }
-                        // }
-                        //UNCOCMENT THIS IF YOU WANT TO USE THE WARNING SYSTEM!
-
-                        //Check if too much time has passed for the glider to rise to the surface. 
-                        if (currentMillis - stateStartMillis >= ONE_HOUR) {
-                            Serial.println("To much time has passed, releasing weight by moving to DropWeight state.");
-                            gliderState = DropWeight;
-                        }
-                    }
-
-                    break;
-
-                case Surface:
-              
-                    Serial.println("Gliderstate: " + gliderState); 
-
-                    pitchSP = -20; // Setpoint for pitch, we want the antenna to be above the water.
-                    rollSP = 0; // Setpoint for roll
-
-                    //Check if the dropweight has been released. If not, buissness as usual.
-                    if (dropweightReleased) {
-                        //If the dropweight has been released, we want to transmit that information to land
-                        //so that the glider can be picked up.
-                        Serial.println("Dropweight released, pick me up!");
-                    }
-
-                    //Battery check. If the battery is low, we want to transmit that information to land.
-
-                    //Send GPS position to land along with the state of the glider.
-
-                    //Await command to dive again. 
-
-                    moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
-                    moveTranslationMotor(receivedData, currentPosition, pitchSP, translationmotorRunning);
-
-                    //When command is given enter the Diving state and reset the number of dives
-                    if (Serial.available() > 0) {
-                        char incomingChar = Serial.read();
-                        if (incomingChar == 'go') {
-                            Serial.println("Dive command received, moving to Diving state.");
-
-                            //Reset the number of dives
-                            n_dyk = 0;
-
-                            gliderState = Diving;
-                            stateStartMillis = currentMillis; //Store the time the Diving state started
-                        }
-                    }
-
-                    break;
-
-                case DropWeight:
-
-                    Serial.println("Gliderstate: " + gliderState); 
-
-                    Serial.println("Releasing weight...");
-
-                    //Check if the pump or valve pins are high. If they are, set them to low.
-                    if (pumpPinState == HIGH) {
-                      digitalWrite(PUMP_PIN, LOW);
-                    }
-                    if (valePinState == HIGH) {
-                      digitalWrite(VALVE_PIN, LOW);
-                    }
-                    
-                    digitalWrite(DROPWEIGHT_PIN, HIGH);
-
-                    dropweightReleased = true;
-
-                    //After the release of the dropweight, enter Surface state.
-                    gliderState = Surface;
-                    break;
-            }
-        }
+void receive_response(Ezo_board &ECsensor)  // Function to decode the response after a command was issued
+{
+  char sensordata_buffer[32];            // Buffer to hold the incoming data
+  Ezo_board::errors error = ECsensor.receive_cmd(sensordata_buffer, 32); // Receive the response
+
+//   Serial.print(Sensor.get_name());       // Print the name of the circuit getting the reading
+//   Serial.print(": ");
+
+  if (error == Ezo_board::SUCCESS) {
+    // Serial.println(sensordata_buffer);   // Print the received data
+    lastconductivityreading = atof(sensordata_buffer);
+  } else {
+    switch (error) {
+      case Ezo_board::FAIL:
+        Serial.println("Failed");        // The command has failed
+        break;
+      case Ezo_board::NOT_READY:
+        Serial.println("Pending");       // The command has not yet been finished calculating
+        break;
+      case Ezo_board::NO_DATA:
+        Serial.println("No Data");       // The sensor has no data to send
+        break;
+      case Ezo_board::NOT_READ_CMD:
+        Serial.println("Not Read Command"); // The command was not a read command
+        break;
+      default:
+        Serial.println("Unknown error"); // An unknown error occurred
+        break;
     }
+  }
 }
+
+void glidercontrol(void* pvParameters) {
+  bool translationmotorRunning = false;
+  bool rotationmotorRunning = false;
+  bool glideDownReservoirFull = false;
+  bool glideUpReservoirEmpty = false;
+  bool dropweightReleased = false;
+  bool dykcount = false;
+  float currentPosition = 0;
+  float currentDegree = 0;
+  float pitchSP = 0;
+  float rollSP = 0;
+  unsigned long glideDownTime = 0;
+  unsigned long glideUpTime = 0;
+  int valePinState = digitalRead(VALVE_PIN);
+  int pumpPinState = digitalRead(PUMP_PIN);
+
+  float previousDepth = 0; // Variable to store the previous depth
+  unsigned volatile long previousTime = 0; // Variable to store the previous time
+  unsigned volatile long previousPrintTime = 0; // Variable to store the previous time the state was printed
+  const unsigned long ONE_HOUR = 3600000; // 1 hour in milliseconds, used to check if the glider has been going down/up for too long
+  const unsigned long sampleInterval = 10000; //Interval to sample the depth (in milliseconds)
+  const unsigned long statePrintInterval = 5000; //Interval to check if the glider is moving upwards instead of downwards (in milliseconds)
+  unsigned int warningCount = 0; // Variable to keep track of the number of warnings
+  bool warningFlag = false; // Flag to indicate if a warning has been issued
+  bool previousTimeSet = false; // Flag to indicate if the previous time has been set when Down/Up states shift
+
+  SensorData receivedData;
+
+  while (true) {
+    unsigned long currentMillis = millis(); //Holds the current time the program has been running in milliseconds
+
+
+    //ToDo:
+    // 1.
+    // Add checks when transitioning between states to ensure that the motor/valve/pump are not continuing to run.
+    // If they are, stop them before transitioning to the next state. 
+    //
+    // 2. 
+    // Add checks to ensure that the glider is not moving in the wrong direction. So that when it is supposed to move up, it is not moving down.
+    // 
+    // 3. 
+    // Add communication with AGT 
+    //
+    // 4. 
+    // 
+    
+
+    switch (gliderState) { 
+
+      case Idle: //This case is for when the glider is not doing anything. Activated via button on SeaGUL webpage.
+
+          if (currentMillis - previousPrintTime >= statePrintInterval) {
+            Serial.println("Gliderstate: Idle");
+            previousPrintTime = currentMillis;
+          }
+          //Check if the pump or valve pins are high. If they are, set them to low.
+          if (pumpPinState == HIGH) {
+            digitalWrite(PUMP_PIN, LOW);
+          }
+          if (valePinState == HIGH) {
+            digitalWrite(VALVE_PIN, LOW);
+          }
+
+          //It is now possible to move the stepper motors manually through the SeaGUL webpage.
+          if (movingForward) {
+              float translation_direction = 1; // 1 = forward, -1 = backward
+
+              if (!translationmotorRunning) { //Start the motor if it is not already running
+                  digitalWrite(TRAN_SLEEP_PIN, HIGH);
+                  translationmotorRunning = true;
+              }
+
+              if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
+                controlTranslationMotor(translation_direction, currentPosition, translationmotorRunning); //Move the motor
+              }
+
+
+          } else {
+              if (translationmotorRunning) { //Stop the motor
+                  digitalWrite(TRAN_SLEEP_PIN, LOW);
+                  translationmotorRunning = false;
+              }
+          }
+
+          if (movingBackward) {
+              float translation_direction = -1; // 1 = forward, -1 = backward
+
+              if (!translationmotorRunning) { //Start the motor if it is not already running
+                  digitalWrite(TRAN_SLEEP_PIN, HIGH);
+                  translationmotorRunning = true;
+              }
+
+              if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
+                controlTranslationMotor(translation_direction, currentPosition, translationmotorRunning); //Move the motor
+              }
+
+          } else {
+            if (translationmotorRunning) { //Stop the motor
+                digitalWrite(TRAN_SLEEP_PIN, LOW);
+                translationmotorRunning = false;
+            }
+          }
+
+          if (Serial.available() > 0) {
+            char incomingChar = Serial.read();
+
+            if (incomingChar == 'q') {
+              Serial.println("Dropweight command received, moving to DropWeight state.");
+              gliderState = DropWeight;
+            }
+          }
+
+          break;
+
+      case Diving: //This case activates when the Initiate Dive button is pressed on the SeaGUL webpage.
+
+          if (currentMillis - previousPrintTime >= statePrintInterval) {
+            Serial.println("Gliderstate: Diving");
+            previousPrintTime = currentMillis;
+          }
+
+          //Check if the pump or valve pins are high. If they are, set them to low.
+          if (pumpPinState == HIGH) {
+            digitalWrite(PUMP_PIN, LOW);
+          }
+          if (valePinState == HIGH) {
+            digitalWrite(VALVE_PIN, LOW);
+          }
+          Serial.println("Initiating dive...");
+
+          n_dyk = 0; //Reset the number of dives
+
+          delay(1000);
+
+          Serial.println("Dive initiated. Moving to GlidingDown state.");
+          
+          gliderState = GlidingDown;
+          stateStartMillis = currentMillis; //Store the time the GlidingDown state started
+          break;
+
+      case Calibrating:
+          //Set the displacement of rotation and translation to 0. 
+          //This should be done when the pitch and roll are indicated as 0 on the SeaGul webpage,
+          //before being sent on a mission. 
+          Serial.println("Calibrating...");
+
+          currentPosition = 0;
+          currentDegree = 0;
+          //Future addition: Calibration of compass. 
+
+          delay(2000);
+
+          Serial.println("Calibration done. Returning to Idle state");
+          gliderState = Idle;
+
+          break;
+
+      case GlidingDown:
+
+          if (currentMillis - previousPrintTime >= statePrintInterval) {
+            Serial.println("Gliderstate: GlidingDown");
+            previousPrintTime = currentMillis;
+          }
+
+          //Reset flag, warning count and timer
+          glideUpReservoirEmpty = false;
+          warningCount = 0;
+
+          pitchSP = -20; // Setpoint for pitch
+          rollSP = 0; // Setpoint for roll
+
+          //Future addition: Turning motion
+
+          //First fill the reservoir with oil.
+          if (!glideDownReservoirFull) {
+              Serial.println("Opening valve");
+              digitalWrite(VALVE_PIN, HIGH);
+
+              if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
+                  if (receivedData.potentiometer >= 3500) { //When the reservoir is full we close the valve. Value is not determined yet.
+                      Serial.println("Reservoir full, closing valve.");
+                      digitalWrite(VALVE_PIN, LOW);
+                      glideDownReservoirFull = true; 
+                  }
+              }
+          }
+
+          //After the reservoir is full we can regulate the pitch and roll of the glider.
+          //We can't do these simultaneously because the electrical system will be overloaded. 
+          if (glideDownReservoirFull) {
+
+              if (!previousTimeSet) { // Set the previous time to the current time after the reservoir is full.
+                  previousTime = currentMillis;
+                  previousTimeSet = true;
+              }
+
+              if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
+                //ToDo: If the error is greater than 5 degrees, let the motor adjust the pitch for e.g. 10 seconds. 
+                moveTranslationMotor(receivedData, currentPosition, pitchSP, translationmotorRunning);
+                moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
+              }
+
+              if (Serial.available() > 0) {
+                char incomingChar = Serial.read();
+                if (incomingChar == 's') {
+                  Serial.println("Depth reached, moving to GlidingUp state.");
+
+                  //Reset boolean from the dive down.
+                  glideDownReservoirFull = false;
+
+                  gliderState = GlidingUp;
+                  stateStartMillis = currentMillis; //Store the time the GlidingUp state started
+                  previousTimeSet = false;
+                }
+
+                if (incomingChar == 'q') {
+                  Serial.println("Dropweight command received, moving to DropWeight state.");
+                  gliderState = DropWeight;
+                }
+
+              }
+
+              //UNCOMENT THIS IF YOU WANT TO USE THE WARNING SYSTEM!
+              // if (currentMillis - previousTime >= sampleInterval) {
+              //   warningFlag = false;
+              //   float depthChangeRate = (receivedData.depth - previousDepth) / ((glideDownTime - previousTime)/1000);
+              //   previousDepth = receivedData.depth;
+              //   previousTime = currentMillis;
+
+              //   if (depthChangeRate > 0) {
+                  
+              //     Serial.println("WARNING: Glider is moving upwards instead of down!");
+
+              //     if (!warningFlag) {
+              //       warningCount += 1;
+              //       warningFlag = true;
+              //     }
+
+              //     if (warningCount >= 3) {
+              //       Serial.println("WARNING: Glider is moving upwards instead of down! Releasing weight by moving to DropWeight state.");
+              //       gliderState = DropWeight;
+              //     }                            
+              //   }
+              // }
+              //UNCOCMENT THIS IF YOU WANT TO USE THE WARNING SYSTEM!
+              
+              if (currentMillis - stateStartMillis >= ONE_HOUR) {
+                  Serial.println("To much time has passed, releasing weight by moving to DropWeight state.");
+                  gliderState = DropWeight;
+              }
+          }
+
+          //Check if too much time has passed for the glider to reach its target depth.
+          if (currentMillis - stateStartMillis >= ONE_HOUR) {
+              Serial.println("To much time has passed, releasing weight by moving to DropWeight state.");
+              gliderState = DropWeight;
+          }
+
+          delay(100);
+
+          break;
+      
+      case GlidingUp:
+
+          if (currentMillis - previousPrintTime >= statePrintInterval) {
+            Serial.println("Gliderstate: GlidingUp");
+            previousPrintTime = currentMillis;
+          }
+
+          warningCount = 0;
+          previousTime = 0;
+
+          pitchSP = 20; // Setpoint for pitch
+          rollSP = 0; // Setpoint for roll
+
+          //First start the pump to empty the reservoir.
+          if (!glideUpReservoirEmpty) {
+              Serial.println("Starting pump");
+              digitalWrite(PUMP_PIN, HIGH);
+
+              if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
+                if (receivedData.potentiometer <= 1000) { //When the reservoir is empty we stop the pump. Value is not determined yet.
+                    Serial.println("Reservoir empty, stopping pump.");
+                    digitalWrite(PUMP_PIN, LOW);
+                    glideUpReservoirEmpty = true;
+                }
+              }
+          }
+
+          //After the reservoir is empty we can regulate the pitch and roll of the glider.
+          if (glideUpReservoirEmpty) {
+
+              if (!previousTimeSet) { // Set the previous time to the current time after the reservoir is empty.
+                  previousTime = currentMillis;
+                  previousTimeSet = true;
+              }
+
+
+              if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
+                moveTranslationMotor(receivedData, currentPosition, pitchSP, translationmotorRunning);
+                moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
+              }
+
+              if (Serial.available() > 0) {
+                char incomingChar = Serial.read();
+                if (incomingChar == 'd') {
+                  Serial.println("Surface reached, moving to surface or dive state. Dive number: " + String(n_dyk));
+
+                  //Since a dive is complete we add 1 to the number of dives.
+                  if (!dykcount) {
+                      n_dyk += 1;
+                      totalNumberofDives += 1;
+                      dykcount = true; 
+                  }
+
+                  //If the number of dives is less than 3 we will continue diving by returning to the GlidingDown state.
+                  if (n_dyk < 3) {
+                      gliderState = GlidingDown;
+                      dykcount = false;
+                      stateStartMillis = currentMillis; //Store the time the GlidingDown state started
+                      previousTimeSet = false;
+                  }
+
+                  //If the number of dives is 3 or more we will move to the Surface state and reset the reservoir flag. 
+                  if (n_dyk >= 3) {
+                      gliderState = Surface;
+                      glideUpReservoirEmpty = false;
+                      dykcount = false;
+                  }
+
+                }
+
+                if (incomingChar == 'q') {
+                  Serial.println("Dropweight command received, moving to DropWeight state.");
+                  gliderState = DropWeight;
+                }
+
+              }
+
+              //UNCOMENT THIS IF YOU WANT TO USE THE WARNING SYSTEM!
+              // if (currentMillis - previousTime >= sampleInterval) {
+              //   warningFlag = false;
+              //   float depthChangeRate = (receivedData.depth - previousDepth) / ((millis() - previousTime)/1000);
+              //   previousDepth = receivedData.depth;
+              //   previousTime = currentMillis;
+
+              //   if (depthChangeRate < 0) {
+
+              //     Serial.println("WARNING: Glider is moving downwards instead of up!");
+
+              //     if(!warningFlag) {
+              //       warningCount += 1;
+              //       warningFlag = true;
+              //     }
+                  
+              //     if (warningCount >= 3) {
+              //       Serial.println("WARNING: Glider is moving downwards instead of up! Releasing weight by moving to DropWeight state.");
+              //       gliderState = DropWeight;
+              //     }
+              //   }
+              // }
+              //UNCOCMENT THIS IF YOU WANT TO USE THE WARNING SYSTEM!
+
+              //Check if too much time has passed for the glider to rise to the surface. 
+              if (currentMillis - stateStartMillis >= ONE_HOUR) {
+                  Serial.println("To much time has passed, releasing weight by moving to DropWeight state.");
+                  gliderState = DropWeight;
+              }
+          }
+
+          break;
+
+      case Surface:
+    
+          if (currentMillis - previousPrintTime >= statePrintInterval) {
+            Serial.println("Gliderstate: Surface");
+            previousPrintTime = currentMillis;
+          }
+
+          pitchSP = -20; // Setpoint for pitch, we want the antenna to be above the water.
+          rollSP = 0; // Setpoint for roll
+
+          //Check if the dropweight has been released. If not, buissness as usual.
+          if (dropweightReleased) {
+              //If the dropweight has been released, we want to transmit that information to land
+              //so that the glider can be picked up.
+              Serial.println("Dropweight released, pick me up!");
+          }
+
+          //Battery check. If the battery is low, we want to transmit that information to land.
+
+          //Send GPS position to land along with the state of the glider.
+
+          //Await command to dive again. 
+
+          if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
+            moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
+            moveTranslationMotor(receivedData, currentPosition, pitchSP, translationmotorRunning);
+          }
+
+          //When command is given enter the Diving state and reset the number of dives
+          if (Serial.available() > 0) {
+              char incomingChar = Serial.read();
+              if (incomingChar == 'u') {
+                  Serial.println("Dive command received, moving to Diving state.");
+
+                  //Reset the number of dives
+                  n_dyk = 0;
+
+                  gliderState = Diving;
+                  stateStartMillis = currentMillis; //Store the time the Diving state started
+              }
+          }
+
+          break;
+
+      case DropWeight:
+
+          Serial.println("Gliderstate: DropWeight"); 
+
+          Serial.println("Releasing weight...");
+
+          //Check if the pump or valve pins are high. If they are, set them to low.
+          if (pumpPinState == HIGH) {
+            digitalWrite(PUMP_PIN, LOW);
+          }
+          if (valePinState == HIGH) {
+            digitalWrite(VALVE_PIN, LOW);
+          }
+          
+          digitalWrite(DROPWEIGHT_PIN, HIGH);
+
+          dropweightReleased = true;
+
+          delay(1000);
+
+          digitalWrite(DROPWEIGHT_PIN, LOW);
+
+          //After the release of the dropweight, enter Surface state.
+          gliderState = Surface;
+          break;
+    }
+  }
+}
+
 
 void datagathering(void* pvParameters) {
-    while (true) {
-        icm_20948_DMP_data_t IMUdata;
-        myICM.readDMPdataFromFIFO(&IMUdata);
-        if ((myICM.status == ICM_20948_Stat_Ok) || (myICM.status == ICM_20948_Stat_FIFOMoreDataAvail)) {
-            SensorData data;
-            // myICM.getAGMT(); // The values are only updated when you call 'getAGMT'
-            if ((IMUdata.header & DMP_header_bitmap_Quat6) > 0) {
-            // Q0 value is computed from this equation: Q0^2 + Q1^2 + Q2^2 + Q3^2 = 1.
-            // In case of drift, the sum will not add to 1, therefore, quaternion data need to be corrected with right bias values.
-            // The quaternion data is scaled by 2^30.
+  while (true) {
+      SensorData data;
+      icm_20948_DMP_data_t IMUdata;
+      myICM.readDMPdataFromFIFO(&IMUdata);
+      if ((myICM.status == ICM_20948_Stat_Ok) || (myICM.status == ICM_20948_Stat_FIFOMoreDataAvail)) {
 
-            //Serial.printf("Quat6 data is: Q1:%ld Q2:%ld Q3:%ld\r\n", data.Quat6.Data.Q1, data.Quat6.Data.Q2, data.Quat6.Data.Q3);
+          // myICM.getAGMT(); // The values are only updated when you call 'getAGMT'
+          if ((IMUdata.header & DMP_header_bitmap_Quat6) > 0) {
+          // Q0 value is computed from this equation: Q0^2 + Q1^2 + Q2^2 + Q3^2 = 1.
+          // In case of drift, the sum will not add to 1, therefore, quaternion data need to be corrected with right bias values.
+          // The quaternion data is scaled by 2^30.
 
-            // Scale to +/- 1
-            double q1 = ((double)IMUdata.Quat6.Data.Q1) / 1073741824.0; // Convert to double. Divide by 2^30
-            double q2 = ((double)IMUdata.Quat6.Data.Q2) / 1073741824.0; // Convert to double. Divide by 2^30
-            double q3 = ((double)IMUdata.Quat6.Data.Q3) / 1073741824.0; // Convert to double. Divide by 2^30
+          //Serial.printf("Quat6 data is: Q1:%ld Q2:%ld Q3:%ld\r\n", data.Quat6.Data.Q1, data.Quat6.Data.Q2, data.Quat6.Data.Q3);
 
-            double q0 = sqrt(1.0 - ((q1 * q1) + (q2 * q2) + (q3 * q3)));
+          // Scale to +/- 1
+          double q1 = ((double)IMUdata.Quat6.Data.Q1) / 1073741824.0; // Convert to double. Divide by 2^30
+          double q2 = ((double)IMUdata.Quat6.Data.Q2) / 1073741824.0; // Convert to double. Divide by 2^30
+          double q3 = ((double)IMUdata.Quat6.Data.Q3) / 1073741824.0; // Convert to double. Divide by 2^30
 
-            double q2sqr = q2 * q2;
+          double q0 = sqrt(1.0 - ((q1 * q1) + (q2 * q2) + (q3 * q3)));
 
-            // roll (x-axis rotation)
-            double t0 = +2.0 * (q0 * q1 + q2 * q3);
-            double t1 = +1.0 - 2.0 * (q1 * q1 + q2sqr);
-            data.roll = atan2(t0, t1) * 180.0 / PI;
+          double q2sqr = q2 * q2;
 
-            // pitch (y-axis rotation)
-            double t2 = +2.0 * (q0 * q2 - q3 * q1);
-            t2 = t2 > 1.0 ? 1.0 : t2;
-            t2 = t2 < -1.0 ? -1.0 : t2;
-            data.pitch = asin(t2) * 180.0 / PI;
+          // roll (x-axis rotation)
+          double t0 = +2.0 * (q0 * q1 + q2 * q3);
+          double t1 = +1.0 - 2.0 * (q1 * q1 + q2sqr);
+          data.roll = atan2(t0, t1) * 180.0 / PI;
 
-            // yaw (z-axis rotation)
-            double t3 = +2.0 * (q0 * q3 + q1 * q2);
-            double t4 = +1.0 - 2.0 * (q2sqr + q3 * q3);
-            data.yaw = atan2(t3, t4) * 180.0 / PI;
+          // pitch (y-axis rotation)
+          double t2 = +2.0 * (q0 * q2 - q3 * q1);
+          t2 = t2 > 1.0 ? 1.0 : t2;
+          t2 = t2 < -1.0 ? -1.0 : t2;
+          data.pitch = asin(t2) * 180.0 / PI;
 
-            // Calculate display pitch and roll, the values that are displayed on the SeaGUL webpage.
-            displaypitch = data.pitch;
-            displayroll = data.roll;
-            displayyaw = data.yaw;
+          // yaw (z-axis rotation)
+          double t3 = +2.0 * (q0 * q3 + q1 * q2);
+          double t4 = +1.0 - 2.0 * (q2sqr + q3 * q3);
+          data.yaw = atan2(t3, t4) * 180.0 / PI;
 
-            // Read pressure and temperature
-            Psensor.read();
-            data.depth = Psensor.depth();
-            data.pressure = Psensor.pressure();
-            displaypressure = data.pressure;
+          // Calculate display pitch and roll, the values that are displayed on the SeaGUL webpage.
+          displaypitch = data.pitch;
+          displayroll = data.roll;
+          displayyaw = data.yaw;
 
-            Tsensor.read();
-            data.temperature = Tsensor.temperature();
-            displaytemperature = data.temperature;
+          } else {
+              Serial.println("Quat6 data not ready");
+          }
 
-            // Read potentiometer
-            data.potentiometer = analogRead(SOFT_POT_PIN);
-            displaypotentiometer = data.potentiometer;
+      } else {
+          Serial.println("Failed to read DMP data");
+      }
 
-            // Send data to the second core via a queue
-            if (xQueueSend(sensorDataQueue, &data, portMAX_DELAY) != pdPASS) {
-                Serial.println("Failed to send data to queue");
-            }
+      delay(35);
+      // Read pressure 
+      Psensor.read();
+      data.depth = Psensor.depth();
+      data.pressure = Psensor.pressure();
+      displaypressure = data.pressure;
 
-            // Log the data to the SD card
-            String logData = "Pitch: " + String(data.pitch) + " degrees, " +
-                             "Roll: " + String(data.roll) + " degrees, " +
-                             "Yaw: " + String(data.yaw) + " degrees, " +
-                             "Depth: " + String(data.depth) + " m, " +
-                             "Pressure: " + String(data.pressure) + " mbar, " +
-                             "Temperature: " + String(data.temperature) + " Celsius";
-                            //  "Batterycurrent: " + String(current) + " A";
-            writeSD(logData);
+      delay(35);
+      // Read temperature
+      Tsensor.read();
+      data.temperature = Tsensor.temperature();
+      displaytemperature = data.temperature;
 
-            } else {
-                Serial.println("Sensor data not ready");
-            }
+      // Read conductivity
+      if (!readingConductivity) {
+        EC.send_cmd("R"); //Request a reading
         
-        }
-        vTaskDelay(pdMS_TO_TICKS(100)); // Adding a delay to reduce bus congestion and improve stability
+        next_ECread_time = millis() + 1000; // Set when the response will arrive
+        readingConductivity = true; // Switch to the receiving phase
+      }
+  
+    if (readingConductivity && millis() >= next_ECread_time) {
+        receive_response(EC); // Get the response from the EC circuit
+        readingConductivity = false; // Switch back to asking for readings
     }
+
+      // Read potentiometer
+      data.potentiometer = analogRead(SOFT_POT_PIN);
+      displaypotentiometer = data.potentiometer;
+
+      // Send data to the second core via a queue
+      if (xQueueSend(sensorDataQueue, &data, (TickType_t)10) != pdPASS) {
+          // Serial.println("Failed to send data to queue");
+      }
+
+      // Log the data to the SD card
+      String logData = "Pitch: " + String(data.pitch) + " degrees, " +
+                        "Roll: " + String(data.roll) + " degrees, " +
+                        "Yaw: " + String(data.yaw) + " degrees, " +
+                        "Depth: " + String(data.depth) + " m, " +
+                        "Pressure: " + String(data.pressure) + " mbar, " +
+                        "Conductivity" + String(lastconductivityreading) + " mS/cm, " +
+                        "Temperature: " + String(data.temperature) + " Celsius";
+                      //  "Batterycurrent: " + String(current) + " A";
+      // writeSD(logData);
+      Serial.println(logData);
+
+      // delay(100); // Adding a delay to reduce bus congestion and improve stability
+    }
+
+  // vTaskDelay(pdMS_TO_TICKS(1000)); // Adding a delay to reduce bus congestion and improve stability
 }
+
 

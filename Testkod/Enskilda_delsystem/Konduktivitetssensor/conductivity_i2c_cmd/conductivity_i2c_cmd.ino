@@ -20,7 +20,7 @@ bool input_string_complete = false;       // Have we received all the data from 
 void setup()
 {
   Wire.begin(SDA_PIN, SCL_PIN);           // Start the I2C with specified SDA and SCL pins
-  Serial.begin(9600);                     // Start the serial communication to the computer at baud rate of 9600
+  Serial.begin(115200);                     // Start the serial communication to the computer at baud rate of 9600
   inputstring.reserve(30);                // Set aside some bytes for receiving data from the PC
 
   // Add a small delay to ensure sensor is ready

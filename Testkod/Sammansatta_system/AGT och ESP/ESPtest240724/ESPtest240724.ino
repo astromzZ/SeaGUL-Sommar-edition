@@ -2,7 +2,8 @@
 
 #define RX_PIN 36 // RX pin configuration
 #define TX_PIN 35 // TX pin configuration
-#define ACTIVATION_PIN 47 // Activation pin for initializing UART
+#define POKE_PIN 48 // Pin to check if the device has been poked
+#define ACTIVATION_PIN 45 // Activation pin for initializing UART
 
 HardwareSerial MySerial(1); // Initialize UART1
 
@@ -15,6 +16,7 @@ void setup() {
   MySerial.begin(19200, SERIAL_8N1, RX_PIN, TX_PIN); // Initialize UART with specified pins
   
   pinMode(ACTIVATION_PIN, INPUT_PULLDOWN);  // Set the activation pin as input with pull-down resistor
+  pinMode(POKE_PIN, INPUT);
 }
 
 void initializeUART() {
@@ -60,6 +62,14 @@ void loop() {
   checkActivationPin();
   checkUARTAndReceive();
   sendMessageToUART();
+
+  if (digitalRead(POKE_PIN) == HIGH) {
+    Serial.println("I've been poked! Repsonding...");
+    digitalWrite(ACTIVATION_PIN, HIGH);
+    delay(500);
+    digitalWrite(ACTIVATION_PIN, LOW);
+  }
+
   delay(1000); // Delay between messages
 }
 

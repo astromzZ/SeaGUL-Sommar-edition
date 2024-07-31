@@ -83,7 +83,7 @@ const byte PIN_AGTWIRE_SDA = 9;
 TwoWire agtWire(PIN_AGTWIRE_SDA, PIN_AGTWIRE_SCL); //Create an I2C port using pads 8 (SCL) and 9 (SDA)
 
 #include <SoftwareSerial.h> 
-SoftwareSerial mySerial(D5, D6); // RX, TX
+SoftwareSerial mySerial(D5, D6); // RX, TX (SCK, CIPO)
 
 #include "SparkFun_u-blox_GNSS_Arduino_Library.h" //http://librarymanager/All#SparkFun_u-blox_GNSS
 SFE_UBLOX_GNSS myGNSS;
@@ -106,6 +106,18 @@ volatile bool intervalAlarm = false;
 
 // This flag indicates a wake-up from deep sleep
 volatile bool uartWakeUpFlag = false;
+
+// This flag is used to poke the ESP32 to see if it still runs
+volatile bool poke = false;
+
+// This flag is used to release the dropweight
+volatile bool dropweight = false;
+
+// This flag is used to send a message to land
+volatile bool sendmessage = false;
+
+// This flag is used to send the position to land
+volatile bool sendposition = false;
 
 // iterationCounter is incremented each time a transmission is attempted.
 // It helps keep track of whether messages are being sent successfully.
@@ -139,7 +151,7 @@ String message; // The message to be sent via Iridium
 
 // Timeout after this many _minutes_ when waiting for a 3D GNSS fix
 // (UL = unsigned long)
-#define GNSS_timeout 5UL
+volatile long GNSS_timeout = 5UL;
 
 // Timeout after this many _minutes_ when waiting for the super capacitors to charge
 // 1 min should be OK for 1F capacitors at 150mA.
@@ -304,6 +316,7 @@ void setup()
   pinMode(iridiumRI, INPUT); // Configure the Iridium Ring Indicator as an input
   pinMode(iridiumNA, INPUT); // Configure the Iridium Network Available as an input
   pinMode(superCapPGOOD, INPUT); // Configure the super capacitor charger PGOOD input
+  pinMode(D4, OUTPUT); // D4 can be used as a handshake pin for the ESP communication
 
   attachInterrupt(35, uartISR, RISING); // Adjust the interrupt mode as needed, pin 35 for the Artemis Global Tracker
 
@@ -369,9 +382,26 @@ void loop()
         Serial.print(agtVbat,2);
         Serial.println(F(" ***"));
         // loop_step = zzz; // Go to sleep
+      } else if (poke == true) {
+        Serial.println(F("Poke the ESP32 to see if it still runs"));
+        digitalWrite(D4, HIGH); // Set D4 high to wake the ESP32
+
+        delay(500); // Wait to see if we get an answer
+
+        if (uartWakeUpFlag == true) {
+          Serial.println(F("ESP32 is awake"));
+          uartWakeUpFlag = false;
+          poke = false;
+          loop_step = read_UART; 
+        } else {
+          Serial.println(F("ESP32 is not awake"));
+          poke = false;
+          dropweight = true;
+          loop_step = read_UART; // Send that the ESP32 is not awake and that the dropweight is released
+        }
       }
       else {
-        loop_step = read_UART; // Move on, start the GNSS
+        loop_step = read_UART; 
       }
       
       break; // End of case loop_init
@@ -467,6 +497,10 @@ void loop()
       Serial.println(F("Waiting for a 3D GNSS fix..."));
 
       agtFixType = 0; // Clear the fix type
+
+      if (dropweight) {
+        GNSS_timeout = 50UL; // Increase the timeout to 50 minutes
+      }
       
       // Look for GNSS signal for up to GNSS_timeout minutes
       for (unsigned long tnow = millis(); (agtFixType != 3) && ((millis() - tnow) < (GNSS_timeout * 60UL * 1000UL));)
@@ -528,7 +562,7 @@ void loop()
         Serial.print(F("Longitude (degrees): ")); Serial.println(agtLongitude, 6);
         Serial.print(F("Altitude (m): ")); Serial.println(agtAltitude);
 
-        loop_step = read_UART; // Move on, read the pressure and temperature
+        loop_step = start_LTC3225; // Move on, read the pressure and temperature
       }
       
       else
@@ -589,77 +623,34 @@ void loop()
         if (message.startsWith("m")) //The ESP wants to transmit a message
         {
           Serial.println("ESP wants to transmit a message");
+          sendmessage = true; 
           loop_step = start_GNSS; // If the ESP wants to transmit a message, we send the gps coordinates as well. 
         }
         else if (message == "s") //The ESP wants the AGT to go to sleep
         {
-          Serial.println("ESP wants to go to sleep");
-          // loop_step = zzz;
+          Serial.println("ESP wants you to go to sleep");
+          loop_step = zzz;
         }
         else if (message == "g") {
           Serial.println("ESP wants to get GNSS fix");
+          sendposition = true;
           loop_step = start_GNSS;
+        }
+        else if (message = "r") {
+          Serial.println("ESP wants to get message");
+          // loop_step = wait_for_ring;
         }
         else
         {
           Serial.println("Unknown message");
           // loop_step = zzz;
         }
-
-
-
-
+      } else if (dropweight) {
+        Serial.println("Dropweight released, transmit to land");
+        loop_step = start_GNSS;
+      } else {
+        loop_step = zzz; //Go to sleep if the ESP doesn't wan't to do anything
       }
-
-
-
-
-
-
-
-
-      // Serial.println(F("Getting the pressure and temperature readings..."));
-
-      // setAGTWirePullups(1); // MS8607 needs pull-ups
-
-      // bool barometricSensorOK;
-
-      // barometricSensorOK = barometricSensor.begin(agtWire); // Begin the PHT sensor
-      // if (barometricSensorOK == false)
-      // {
-      //   // Send a warning message if we were unable to connect to the MS8607:
-      //   Serial.println(F("*** Could not detect the MS8607 sensor. Trying again... ***"));
-      //   barometricSensorOK = barometricSensor.begin(agtWire); // Re-begin the PHT sensor
-      //   if (barometricSensorOK == false)
-      //   {
-      //     // Send a warning message if we were unable to connect to the MS8607:
-      //     Serial.println(F("*** MS8607 sensor not detected at default I2C address ***"));
-      //   }
-      // }
-
-      // if (barometricSensorOK == false)
-      // {
-      //    // Set the pressure and temperature to default values
-      //   agtPascals = 0.0;
-      //   agtTempC = 0.0;
-      // }
-      // else
-      // {
-      //   agtTempC = barometricSensor.getTemperature();
-      //   agtPascals = barometricSensor.getPressure() * 100.0; // Convert pressure from hPa to Pascals
-
-      //   Serial.print(F("Temperature="));
-      //   Serial.print(agtTempC, 1);
-      //   Serial.print(F("(C)"));
-      
-      //   Serial.print(F(" Pressure="));
-      //   Serial.print(agtPascals, 1);
-      //   Serial.println(F("(Pa)"));
-      // }
-
-      // setAGTWirePullups(0); // Disable pull-ups
-
-      loop_step = start_LTC3225; // Move on, start the super capacitor charger
 
       break; // End of case read_UART
 
@@ -767,7 +758,7 @@ void loop()
         Serial.print(agtVbat,2);
         Serial.println(F("V ***"));
         
-        // loop_step = zzz;
+        loop_step = zzz;
       }
 
       else if (agtPGOOD)
@@ -783,7 +774,7 @@ void loop()
         // The super capacitors did not charge so power down and go to sleep
         Serial.println(F("*** Supercapacitors failed to hold charge in wait_LTC3225 ***"));
 
-        // loop_step = zzz;
+        loop_step = zzz;
       }
   
       break; // End of case wait_LTC3225
@@ -812,7 +803,7 @@ void loop()
         Serial.print(F("*** modem.begin failed with error "));
         Serial.print(agtErr);
         Serial.println(F(" ***"));
-        // loop_step = zzz;
+        loop_step = zzz;
       }
 
       else
@@ -867,19 +858,24 @@ void loop()
         else
           sprintf(gnssSec, "%d", agtSecond);
         
-        // Assemble the message using sprintf
+
         sprintf(outBuffer, "%d%s%s%s%s%s,%s,%s,%s,%s,%d,%d,%d,%s,%s,%s,%d", agtYear, gnssMonth, gnssDay, gnssHour, gnssMin, gnssSec, 
-          latStr, lonStr, altStr, speedStr, agtCourse, agtPDOP, agtSatellites, pressureStr, temperatureStr, vbatStr, iterationCounter);
+            latStr, lonStr, altStr, speedStr, agtCourse, agtPDOP, agtSatellites, pressureStr, temperatureStr, vbatStr, iterationCounter);
+        
 
         // Send the message
         Serial.print(F("Transmitting message '"));
         Serial.print(outBuffer);
         Serial.println(F("'"));
 
+        uint8_t mt_buffer[100]; // Buffer to store Mobile Terminated SBD message
+        size_t mtBufferSize = sizeof(mt_buffer); // Size of MT buffer
+
 #ifndef noTX
-        agtErr = modem.sendSBDText(outBuffer); // This could take many seconds to complete and will call ISBDCallback() periodically
+        agtErr = modem.sendReceiveSBDText(outBuffer, mt_buffer, mtBufferSize); // This could take many seconds to complete and will call ISBDCallback() periodically
 #else
-        agtErr = ISBD_SUCCESS;
+        agtErr = ISBD_SUCCESS; // Fake success
+        mtBufferSize = 0;
 #endif
 
         // Check if the message sent OK
@@ -905,6 +901,77 @@ void loop()
             delay(100);
           }
 #endif
+          if (mtBufferSize > 0) { // Was an MT message received?
+            // Check message content
+            mt_buffer[mtBufferSize] = 0; // Make sure message is NULL terminated
+            String mt_str = String((char *)mt_buffer); // Convert message into a String
+            Serial.print(F("Received a MT message: ")); Serial.println(mt_str);
+
+            // Check if the message contains a correctly formatted interval: "[INTERVAL=nnn]"
+            int new_interval = 0;
+            int starts_at = -1;
+            int ends_at = -1;
+            starts_at = mt_str.indexOf("[INTERVAL="); // See is message contains "[INTERVAL="
+            if (starts_at >= 0) { // If it does:
+              ends_at = mt_str.indexOf("]", starts_at); // Find the following "]"
+              if (ends_at > starts_at) { // If the message contains both "[INTERVAL=" and "]"
+                String new_interval_str = mt_str.substring((starts_at + 10),ends_at); // Extract the value after the "="
+                Serial.print(F("Extracted an INTERVAL of: ")); Serial.println(new_interval_str);
+                new_interval = (int)new_interval_str.toInt(); // Convert it to int
+              }
+            }
+            if ((new_interval > 0) and (new_interval <= 1440)) { // Check new interval is valid
+              Serial.print(F("New INTERVAL received. Setting TXINT to "));
+              Serial.print(new_interval);
+              Serial.println(F(" minutes."));
+              myTrackerSettings.TXINT = new_interval; // Update the transmit interval
+              putTrackerSettings(&myTrackerSettings); // Update flash memory
+            }
+
+            // Check if the message contains a correctly formatted RBSOURCE: "[RBSOURCE=nnnnn]"
+            int new_source = -1;
+            starts_at = -1;
+            ends_at = -1;
+            starts_at = mt_str.indexOf("[RBSOURCE="); // See is message contains "[RBSOURCE="
+            if (starts_at >= 0) { // If it does:
+              ends_at = mt_str.indexOf("]", starts_at); // Find the following "]"
+              if (ends_at > starts_at) { // If the message contains both "[RBSOURCE=" and "]"
+                String new_source_str = mt_str.substring((starts_at + 10),ends_at); // Extract the value after the "="
+                Serial.print(F("Extracted an RBSOURCE of: ")); Serial.println(new_source_str);
+                new_source = (int)new_source_str.toInt(); // Convert it to int
+              }
+            }
+            // toInt returns zero if the conversion fails, so it is not possible to distinguish between a source of zero and an invalid value!
+            // An invalid value will cause RBSOURCE to be set to zero
+            if (new_source >= 0) { // If new_source was received
+              Serial.print(F("New RBSOURCE received. Setting SOURCE to "));
+              Serial.println(new_source);
+              myTrackerSettings.SOURCE = new_source; // Update the source RockBLOCK serial number
+              putTrackerSettings(&myTrackerSettings); // Update flash memory
+            }
+
+            // Check if the message contains a correctly formatted RBDESTINATION: "[RBDESTINATION=nnnnn]"
+            int new_destination = -1;
+            starts_at = -1;
+            ends_at = -1;
+            starts_at = mt_str.indexOf("[RBDESTINATION="); // See is message contains "[RBDESTINATION="
+            if (starts_at >= 0) { // If it does:
+              ends_at = mt_str.indexOf("]", starts_at); // Find the following "]"
+              if (ends_at > starts_at) { // If the message contains both "[RBDESTINATION=" and "]"
+                String new_destination_str = mt_str.substring((starts_at + 15),ends_at); // Extract the value after the "="
+                Serial.print(F("Extracted an RBDESTINATION of: ")); Serial.println(new_destination_str);
+                new_destination = (int)new_destination_str.toInt(); // Convert it to int
+              }
+            }
+            // toInt returns zero if the conversion fails, so it is not possible to distinguish between a destination of zero and an invalid value!
+            // An invalid value will cause RBDESTINATION to be set to zero
+            if (new_destination >= 0) { // If new_destination was received
+              Serial.print(F("New RBDESTINATION received. Setting DEST to "));
+              Serial.println(new_destination);
+              myTrackerSettings.DEST = new_destination; // Update the destination RockBLOCK serial number
+              putTrackerSettings(&myTrackerSettings); // Update flash memory
+            }
+          }
         }
 
         // Clear the Mobile Originated message buffer
@@ -934,6 +1001,7 @@ void loop()
       }
 
       break; // End of case start_9603
+      
       
     // ************************************************************************************************
     // Go to sleep
@@ -1013,12 +1081,15 @@ void loop()
           am_hal_sysctrl_sleep(AM_HAL_SYSCTRL_SLEEP_DEEP);
         }
 
-        if (intervalAlarm) {
-          intervalAlarm = false; // Clear the alarm flag now
-        }
-
-        if (uartWakeUpFlag) {
-          uartWakeUpFlag = false; // Clear the UART wake-up flag now
+        if (intervalAlarm || uartWakeUpFlag) {
+          if (intervalAlarm) {
+            Serial.println(F("Woken up by RTC alarm"));
+            intervalAlarm = false; // Clear the alarm flag now
+            poke = true; // Set the poke flag to true
+          } else {
+            Serial.println(F("Woken up by UART interrupt"));
+            uartWakeUpFlag = false; // Clear the UART flag now
+          }
         }
 
         // Wake up!
