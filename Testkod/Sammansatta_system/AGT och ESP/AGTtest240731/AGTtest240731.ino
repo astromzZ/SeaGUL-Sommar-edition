@@ -611,66 +611,65 @@ void loop()
   
         // Power down the GNSS
         Serial.println(F("Powering down the GNSS..."));
-        // gnssOFF(); // Disable power for the GNSS
+        gnssOFF(); // Disable power for the GNSS
 
         // Make sure the Serial1 RX pin is disabled
-        // modem.endSerialPort();
+        modem.endSerialPort();
   
         // Disable 9603N power
         Serial.println(F("Disabling 9603N power..."));
-        // digitalWrite(iridiumSleep, LOW); // Disable 9603N via its ON/OFF pin (modem.sleep should have done this already)
-        // delay(1000);
-        // digitalWrite(iridiumPwrEN, LOW); // Disable Iridium Power
-        // delay(1000);
+        digitalWrite(iridiumSleep, LOW); // Disable 9603N via its ON/OFF pin (modem.sleep should have done this already)
+        delay(1000);
+        digitalWrite(iridiumPwrEN, LOW); // Disable Iridium Power
+        delay(1000);
       
         // Disable the supercapacitor charger
         Serial.println(F("Disabling the supercapacitor charger..."));
-        // digitalWrite(superCapChgEN, LOW); // Disable the super capacitor charger
+        digitalWrite(superCapChgEN, LOW); // Disable the super capacitor charger
   
         // Close the Iridium serial port
-        // Serial1.end();
+        Serial1.end();
   
         // Close the I2C port
         //agtWire.end(); //DO NOT Power down I2C - causes badness with v2.1 of the core: https://github.com/sparkfun/Arduino_Apollo3/issues/412
   
-        // digitalWrite(busVoltageMonEN, LOW); // Disable the bus voltage monitor
+        digitalWrite(busVoltageMonEN, LOW); // Disable the bus voltage monitor
   
-        // digitalWrite(LED, LOW); // Disable the LED
+        digitalWrite(LED, LOW); // Disable the LED
   
         // Close and detach the serial console
         Serial.println(F("Going into deep sleep until next INTERVAL..."));
         Serial.flush(); //Finish any prints
 
         clearSerialBuffer(mySerial);
-        
-        // Serial.end(); // Close the serial console
+        // mySerial.end(); // Close the serial console
   
-        // // Code taken (mostly) from Apollo3 Example6_Low_Power_Alarm
+        // Code taken (mostly) from Apollo3 Example6_Low_Power_Alarm
         
-        // // Disable ADC
-        // powerControlADC(false);
+        // Disable ADC
+        powerControlADC(false);
       
-        // // Force the peripherals off
-        // am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_IOM0); // SPI
-        // //am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_IOM1); // agtWire I2C
-        // am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_IOM2);
-        // am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_IOM3);
-        // am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_IOM4); // Qwiic I2C
-        // am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_IOM5);
-        // am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_ADC);
-        // //am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_UART0); // Leave UART0 on to avoid printing erroneous characters to Serial
-        // am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_UART1); // Serial1
+        // Force the peripherals off
+        am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_IOM0); // SPI
+        //am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_IOM1); // agtWire I2C
+        am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_IOM2);
+        am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_IOM3);
+        am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_IOM4); // Qwiic I2C
+        am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_IOM5);
+        am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_ADC);
+        //am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_UART0); // Leave UART0 on to avoid printing erroneous characters to Serial
+        am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_UART1); // Serial1
       
         // // Disable all unused pins - including: SCL (8), SDA (9), UART0 TX (48) and RX (49) and UART1 TX (24) and RX (25)
-        // const int pinsToDisable[] = {0,1,2,8,9,11,12,14,15,16,20,21,24,25,29,31,32,33,36,37,38,42,43,44,45,48,49,-1};
-        // for (int x = 0; pinsToDisable[x] >= 0; x++)
-        // {
-        //   pin_config(PinName(pinsToDisable[x]), g_AM_HAL_GPIO_DISABLE);
-        // }
+        const int pinsToDisable[] = {0,1,2,8,9,11,12,14,15,16,20,21,24,25,29,31,32,33,36,37,38,42,43,44,45,48,49,-1};
+        for (int x = 0; pinsToDisable[x] >= 0; x++)
+        {
+          pin_config(PinName(pinsToDisable[x]), g_AM_HAL_GPIO_DISABLE);
+        }
       
         // //Power down CACHE, flashand SRAM
-        // am_hal_pwrctrl_memory_deepsleep_powerdown(AM_HAL_PWRCTRL_MEM_ALL); // Power down all flash and cache
-        // am_hal_pwrctrl_memory_deepsleep_retain(AM_HAL_PWRCTRL_MEM_SRAM_384K); // Retain all SRAM (0.6 uA)
+        am_hal_pwrctrl_memory_deepsleep_powerdown(AM_HAL_PWRCTRL_MEM_ALL); // Power down all flash and cache
+        am_hal_pwrctrl_memory_deepsleep_retain(AM_HAL_PWRCTRL_MEM_SRAM_384K); // Retain all SRAM (0.6 uA)
         
         // // Keep the 32kHz clock running for RTC
         // am_hal_stimer_config(AM_HAL_STIMER_CFG_CLEAR | AM_HAL_STIMER_CFG_FREEZE);
@@ -680,7 +679,7 @@ void loop()
         while (!intervalAlarm && !uartWakeUpFlag)  // Use && instead of ||
         {
           // // Go to Deep Sleep.
-          // am_hal_sysctrl_sleep(AM_HAL_SYSCTRL_SLEEP_DEEP);
+          am_hal_sysctrl_sleep(AM_HAL_SYSCTRL_SLEEP_DEEP);
         }
 
         if (intervalAlarm || uartWakeUpFlag) {
@@ -711,18 +710,20 @@ void loop()
       // Go back to using the main clock
       // am_hal_stimer_config(AM_HAL_STIMER_CFG_CLEAR | AM_HAL_STIMER_CFG_FREEZE);
       // am_hal_stimer_config(AM_HAL_STIMER_HFRC_3MHZ);
-    
+      // mySerial.begin(9600);
+      // clearSerialBuffer(mySerial);
+      // attachInterrupt(35, uartISR, RISING);
       // // Power up SRAM, turn on entire Flash
-      // am_hal_pwrctrl_memory_deepsleep_powerdown(AM_HAL_PWRCTRL_MEM_MAX);
+      am_hal_pwrctrl_memory_deepsleep_powerdown(AM_HAL_PWRCTRL_MEM_MAX);
     
-      // Renable UART0 pins: TX (48) and RX (49)
-      // pin_config(PinName(48), g_AM_BSP_GPIO_COM_UART_TX);
-      // pin_config(PinName(49), g_AM_BSP_GPIO_COM_UART_RX);
+      // // Renable UART0 pins: TX (48) and RX (49)
+      pin_config(PinName(48), g_AM_BSP_GPIO_COM_UART_TX);
+      pin_config(PinName(49), g_AM_BSP_GPIO_COM_UART_RX);
     
       // Do not renable the UART1 pins here as the modem is still powered off. Let modem.begin do it via beginSerialPort.
     
       // Enable ADC
-      // powerControlADC(true);
+      powerControlADC(true);
 
       // Do it all again!
       loop_step = loop_init;
