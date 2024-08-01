@@ -2,7 +2,7 @@
 
 #define RX_PIN 36 // RX pin configuration
 #define TX_PIN 35 // TX pin configuration
-#define ACTIVATION_PIN 47 // Activation pin for initializing UART
+#define ACTIVATION_PIN 45 // Activation pin for initializing UART
 
 HardwareSerial MySerial(1); // Initialize UART1
 
@@ -12,14 +12,14 @@ void setup() {
   Serial.begin(115200);  // Serial for debugging
   Serial.println("ESP32-S3 ready to communicate");
 
-  MySerial.begin(19200, SERIAL_8N1, RX_PIN, TX_PIN); // Initialize UART with specified pins
+  MySerial.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN); // Initialize UART with specified pins
   
   pinMode(ACTIVATION_PIN, INPUT_PULLDOWN);  // Set the activation pin as input with pull-down resistor
 }
 
 void initializeUART() {
   if (!uartInitialized) {
-    MySerial.begin(19200, SERIAL_8N1, RX_PIN, TX_PIN); // Initialize UART with specified pins
+    MySerial.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN); // Initialize UART with specified pins
     Serial.println("UART initialized with pins 36 (RX) and 35 (TX)");
     uartInitialized = true; // Set the flag to true
   }

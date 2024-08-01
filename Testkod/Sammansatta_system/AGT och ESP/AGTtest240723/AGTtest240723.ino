@@ -70,7 +70,7 @@ void setup() {
   Serial.begin(115200);
   Serial.println("Artemis Global Tracker ready");
 
-  mySerial.begin(19200);
+  mySerial.begin(9600);
 
   pinMode(35, OUTPUT);
   digitalWrite(35, HIGH);
@@ -81,6 +81,8 @@ void loop() {
     String receivedData = mySerial.readStringUntil('>');
     Serial.println("Received: " + receivedData);
     digitalWrite(35, LOW);  // Indicate data received
+    delay(2000);
+    mySerial.flush();
     delay(1000);
     digitalWrite(35, HIGH);
   } else {

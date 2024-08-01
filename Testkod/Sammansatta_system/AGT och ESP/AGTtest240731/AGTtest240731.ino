@@ -297,12 +297,18 @@ void IridiumSBD::endSerialPort()
   am_hal_gpio_pinconfig(PinName(D25), g_AM_HAL_GPIO_DISABLE);
 }
 
+void clearSerialBuffer(SoftwareSerial &serial) {
+  while (serial.available() > 0) {
+    serial.read();
+  }
+}
+
 void setup()
 {
   // Let's begin by setting up the I/O pins
 
   Serial.begin(115200);
-  mySerial.begin(19200);
+  mySerial.begin(9600);
 
   while (!Serial) // Wait for the user to open the serial monitor
     ;
@@ -389,13 +395,37 @@ void loop()
       // Setup the IridiumSBD
       modem.setPowerProfile(IridiumSBD::USB_POWER_PROFILE); // Change power profile to "low current"
 
-      getVbat(); // Get the battery (bus) voltage
-      if (agtVbat < VBAT_LOW) {
-        Serial.print(F("*** LOW VOLTAGE (init) "));
-        Serial.print(agtVbat,2);
-        Serial.println(F(" ***"));
-        // loop_step = zzz; // Go to sleep
-      } else if (poke == true) {
+      // getVbat(); // Get the battery (bus) voltage
+      // if (agtVbat < VBAT_LOW) {
+      //   Serial.print(F("*** LOW VOLTAGE (init) "));
+      //   Serial.print(agtVbat,2);
+      //   Serial.println(F(" ***"));
+      //   // loop_step = zzz; // Go to sleep
+      // } else if (poke == true) {
+      //   Serial.println(F("Poke the ESP32 to see if it still runs"));
+      //   digitalWrite(D4, HIGH); // Set D4 high to wake the ESP32
+
+      //   delay(500); // Wait to see if we get an answer
+
+      //   digitalWrite(D4, LOW); 
+
+      //   if (uartWakeUpFlag == true) {
+      //     Serial.println(F("ESP32 is awake"));
+      //     uartWakeUpFlag = false;
+      //     poke = false;
+      //     loop_step = zzz; // Go to sleep
+      //   } else {
+      //     Serial.println(F("ESP32 is not awake"));
+      //     poke = false;
+      //     dropweight = true;
+      //     loop_step = read_UART; // Send that the ESP32 is not awake and that the dropweight is released
+      //   }
+      // }
+      // else {
+      //   loop_step = read_UART; 
+      // }
+
+      if (poke && !uartWakeUpFlag) {
         Serial.println(F("Poke the ESP32 to see if it still runs"));
         digitalWrite(D4, HIGH); // Set D4 high to wake the ESP32
 
@@ -403,7 +433,7 @@ void loop()
 
         digitalWrite(D4, LOW); 
 
-        if (uartWakeUpFlag == true) {
+        if (uartWakeUpFlag) {
           Serial.println(F("ESP32 is awake"));
           uartWakeUpFlag = false;
           poke = false;
@@ -414,12 +444,9 @@ void loop()
           dropweight = true;
           loop_step = read_UART; // Send that the ESP32 is not awake and that the dropweight is released
         }
+      } else {
+        loop_step = read_UART;
       }
-      else {
-        loop_step = read_UART; 
-      }
-
-      loop_step = read_UART; // Go to the next step
       
       break; // End of case loop_init
 
@@ -458,6 +485,8 @@ void loop()
         Serial.println(F("Woken up by UART interrupt"));
 
         Serial.println("Ready to recieve message!");
+
+        mySerial.flush();
         digitalWrite(D4, HIGH); // Set D4 high to wake the ESP32
 
         // mySerial.println("r"); //request message
@@ -465,10 +494,11 @@ void loop()
         //Wait for message
         while (mySerial.available() == 0) {
           delay(100);
+          // Serial.println("Waiting for message...");
         } 
 
         //Read message
-        if (mySerial.available() > 0) {
+        if (mySerial.available()) {
           message = mySerial.readStringUntil(']');
           Serial.println("Received: " + message);
         }
@@ -478,34 +508,45 @@ void loop()
           Serial.println("ESP wants to transmit a message");
           sendmessage = true;
           uartWakeUpFlag = false;
+          delay(1000);
           digitalWrite(D4, LOW); // Set D4 low to signal that the message has been recieved
+          clearSerialBuffer(mySerial);
           loop_step = start_GNSS; // If the ESP wants to transmit a message, we send the gps coordinates as well. 
         }
         else if (message == "s") //The ESP wants the AGT to go to sleep
         {
           Serial.println("ESP wants you to go to sleep");
           uartWakeUpFlag = false;
+          delay(1000);
           digitalWrite(D4, LOW); // Set D4 low to signal that the message has been recieved
+          clearSerialBuffer(mySerial);
           loop_step = zzz;
         }
         else if (message == "g") {
           Serial.println("ESP wants to send GNSS fix");
           sendposition = true;
           uartWakeUpFlag = false;
+          delay(1000);
           digitalWrite(D4, LOW); // Set D4 low to signal that the message has been recieved
+          clearSerialBuffer(mySerial);
           loop_step = start_GNSS;
         }
-        else if (message = "r") {
+        else if (message == "r") {
           Serial.println("ESP wants to get message");
-          mySerial.println("Hi! This is my message");
+          // mySerial.println("Hi! This is my message");
           uartWakeUpFlag = false;
+          delay(1000);
           // loop_step = wait_for_ring;
           digitalWrite(D4, LOW); // Set D4 low to signal that the message has been recieved
+          clearSerialBuffer(mySerial);
           loop_step = zzz;
         }
         else
         {
           Serial.println("Unknown message, going to sleep");
+          delay(1000);
+          digitalWrite(D4, LOW); // Set D4 low to signal that the message has been recieved
+          clearSerialBuffer(mySerial);
           uartWakeUpFlag = false;
           loop_step = zzz;
         }
@@ -516,7 +557,7 @@ void loop()
         loop_step = zzz; //Go to sleep if the ESP doesn't wan't to do anything
       }
 
-      loop_step = zzz;
+      // loop_step = zzz;
 
       break; // End of case read_UART
 
@@ -570,74 +611,76 @@ void loop()
   
         // Power down the GNSS
         Serial.println(F("Powering down the GNSS..."));
-        gnssOFF(); // Disable power for the GNSS
+        // gnssOFF(); // Disable power for the GNSS
 
         // Make sure the Serial1 RX pin is disabled
-        modem.endSerialPort();
+        // modem.endSerialPort();
   
         // Disable 9603N power
         Serial.println(F("Disabling 9603N power..."));
-        digitalWrite(iridiumSleep, LOW); // Disable 9603N via its ON/OFF pin (modem.sleep should have done this already)
-        delay(1000);
-        digitalWrite(iridiumPwrEN, LOW); // Disable Iridium Power
-        delay(1000);
+        // digitalWrite(iridiumSleep, LOW); // Disable 9603N via its ON/OFF pin (modem.sleep should have done this already)
+        // delay(1000);
+        // digitalWrite(iridiumPwrEN, LOW); // Disable Iridium Power
+        // delay(1000);
       
         // Disable the supercapacitor charger
         Serial.println(F("Disabling the supercapacitor charger..."));
-        digitalWrite(superCapChgEN, LOW); // Disable the super capacitor charger
+        // digitalWrite(superCapChgEN, LOW); // Disable the super capacitor charger
   
         // Close the Iridium serial port
-        Serial1.end();
+        // Serial1.end();
   
         // Close the I2C port
         //agtWire.end(); //DO NOT Power down I2C - causes badness with v2.1 of the core: https://github.com/sparkfun/Arduino_Apollo3/issues/412
   
-        digitalWrite(busVoltageMonEN, LOW); // Disable the bus voltage monitor
+        // digitalWrite(busVoltageMonEN, LOW); // Disable the bus voltage monitor
   
-        digitalWrite(LED, LOW); // Disable the LED
+        // digitalWrite(LED, LOW); // Disable the LED
   
         // Close and detach the serial console
         Serial.println(F("Going into deep sleep until next INTERVAL..."));
         Serial.flush(); //Finish any prints
+
+        clearSerialBuffer(mySerial);
         
         // Serial.end(); // Close the serial console
   
-        // Code taken (mostly) from Apollo3 Example6_Low_Power_Alarm
+        // // Code taken (mostly) from Apollo3 Example6_Low_Power_Alarm
         
-        // Disable ADC
-        powerControlADC(false);
+        // // Disable ADC
+        // powerControlADC(false);
       
-        // Force the peripherals off
-        am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_IOM0); // SPI
-        //am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_IOM1); // agtWire I2C
-        am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_IOM2);
-        am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_IOM3);
-        am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_IOM4); // Qwiic I2C
-        am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_IOM5);
-        am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_ADC);
-        //am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_UART0); // Leave UART0 on to avoid printing erroneous characters to Serial
-        am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_UART1); // Serial1
+        // // Force the peripherals off
+        // am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_IOM0); // SPI
+        // //am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_IOM1); // agtWire I2C
+        // am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_IOM2);
+        // am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_IOM3);
+        // am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_IOM4); // Qwiic I2C
+        // am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_IOM5);
+        // am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_ADC);
+        // //am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_UART0); // Leave UART0 on to avoid printing erroneous characters to Serial
+        // am_hal_pwrctrl_periph_disable(AM_HAL_PWRCTRL_PERIPH_UART1); // Serial1
       
-        // Disable all unused pins - including: SCL (8), SDA (9), UART0 TX (48) and RX (49) and UART1 TX (24) and RX (25)
-        const int pinsToDisable[] = {0,1,2,8,9,11,12,14,15,16,20,21,24,25,29,31,32,33,36,37,38,42,43,44,45,48,49,-1};
-        for (int x = 0; pinsToDisable[x] >= 0; x++)
-        {
-          pin_config(PinName(pinsToDisable[x]), g_AM_HAL_GPIO_DISABLE);
-        }
+        // // Disable all unused pins - including: SCL (8), SDA (9), UART0 TX (48) and RX (49) and UART1 TX (24) and RX (25)
+        // const int pinsToDisable[] = {0,1,2,8,9,11,12,14,15,16,20,21,24,25,29,31,32,33,36,37,38,42,43,44,45,48,49,-1};
+        // for (int x = 0; pinsToDisable[x] >= 0; x++)
+        // {
+        //   pin_config(PinName(pinsToDisable[x]), g_AM_HAL_GPIO_DISABLE);
+        // }
       
-        //Power down CACHE, flashand SRAM
-        am_hal_pwrctrl_memory_deepsleep_powerdown(AM_HAL_PWRCTRL_MEM_ALL); // Power down all flash and cache
-        am_hal_pwrctrl_memory_deepsleep_retain(AM_HAL_PWRCTRL_MEM_SRAM_384K); // Retain all SRAM (0.6 uA)
+        // //Power down CACHE, flashand SRAM
+        // am_hal_pwrctrl_memory_deepsleep_powerdown(AM_HAL_PWRCTRL_MEM_ALL); // Power down all flash and cache
+        // am_hal_pwrctrl_memory_deepsleep_retain(AM_HAL_PWRCTRL_MEM_SRAM_384K); // Retain all SRAM (0.6 uA)
         
-        // Keep the 32kHz clock running for RTC
-        am_hal_stimer_config(AM_HAL_STIMER_CFG_CLEAR | AM_HAL_STIMER_CFG_FREEZE);
-        am_hal_stimer_config(AM_HAL_STIMER_XTAL_32KHZ);
+        // // Keep the 32kHz clock running for RTC
+        // am_hal_stimer_config(AM_HAL_STIMER_CFG_CLEAR | AM_HAL_STIMER_CFG_FREEZE);
+        // am_hal_stimer_config(AM_HAL_STIMER_XTAL_32KHZ);
       
         // This while loop keeps the processor asleep until INTERVAL seconds have passed
         while (!intervalAlarm && !uartWakeUpFlag)  // Use && instead of ||
         {
-          // Go to Deep Sleep.
-          am_hal_sysctrl_sleep(AM_HAL_SYSCTRL_SLEEP_DEEP);
+          // // Go to Deep Sleep.
+          // am_hal_sysctrl_sleep(AM_HAL_SYSCTRL_SLEEP_DEEP);
         }
 
         if (intervalAlarm || uartWakeUpFlag) {
@@ -660,23 +703,26 @@ void loop()
     // Wake from sleep
     case wakeUp:
 
+      Serial.println(F("Waking up from deep sleep..."));
+      delay(3000); // Wait for the Artemis to wake up
+
       // Code taken (mostly) from Apollo3 Example6_Low_Power_Alarm
       
       // Go back to using the main clock
-      am_hal_stimer_config(AM_HAL_STIMER_CFG_CLEAR | AM_HAL_STIMER_CFG_FREEZE);
-      am_hal_stimer_config(AM_HAL_STIMER_HFRC_3MHZ);
+      // am_hal_stimer_config(AM_HAL_STIMER_CFG_CLEAR | AM_HAL_STIMER_CFG_FREEZE);
+      // am_hal_stimer_config(AM_HAL_STIMER_HFRC_3MHZ);
     
-      // Power up SRAM, turn on entire Flash
-      am_hal_pwrctrl_memory_deepsleep_powerdown(AM_HAL_PWRCTRL_MEM_MAX);
+      // // Power up SRAM, turn on entire Flash
+      // am_hal_pwrctrl_memory_deepsleep_powerdown(AM_HAL_PWRCTRL_MEM_MAX);
     
       // Renable UART0 pins: TX (48) and RX (49)
-      pin_config(PinName(48), g_AM_BSP_GPIO_COM_UART_TX);
-      pin_config(PinName(49), g_AM_BSP_GPIO_COM_UART_RX);
+      // pin_config(PinName(48), g_AM_BSP_GPIO_COM_UART_TX);
+      // pin_config(PinName(49), g_AM_BSP_GPIO_COM_UART_RX);
     
       // Do not renable the UART1 pins here as the modem is still powered off. Let modem.begin do it via beginSerialPort.
     
       // Enable ADC
-      powerControlADC(true);
+      // powerControlADC(true);
 
       // Do it all again!
       loop_step = loop_init;

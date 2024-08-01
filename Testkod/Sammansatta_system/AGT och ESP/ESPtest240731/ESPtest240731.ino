@@ -15,7 +15,7 @@ void setup() {
   Serial.begin(115200);  // Serial for debugging
   Serial.println("ESP32-S3 ready to communicate");
 
-  MySerial.begin(19200, SERIAL_8N1, RX_PIN, TX_PIN); // Initialize UART with specified pins
+  MySerial.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN); // Initialize UART with specified pins
   
   pinMode(ACTIVATION_PIN, OUTPUT);  // Set the activation pin as input with pull-down resistor
   pinMode(POKE_PIN, INPUT);
@@ -38,8 +38,11 @@ void loop() {
         if (digitalRead(POKE_PIN) == HIGH) {
           Serial.println("AGT is ready!");
           // Send message to AGT
-          delay(500);
-          MySerial.println("m: Hi AGT, I am ESP32!]");
+          delay(1000);
+          // MySerial.flush();
+          // delay(1000);
+          MySerial.print("m: Hi AGT, I am ESP32!]");
+          Serial.println("Message sent: m: Hi AGT, I am ESP32!]");
           delay(100);
           digitalWrite(ACTIVATION_PIN, LOW);
         }
@@ -55,9 +58,12 @@ void loop() {
 
         if (digitalRead(POKE_PIN) == HIGH) {
           Serial.println("AGT is ready!");
+          delay(10);
+          MySerial.flush();
           // Send message to AGT
-          delay(500);
-          MySerial.println("s]");
+          delay(1000);
+          MySerial.print("s]");
+          Serial.println("Message sent: s]");
           delay(100);
           digitalWrite(ACTIVATION_PIN, LOW);
         }
@@ -73,9 +79,12 @@ void loop() {
 
         if (digitalRead(POKE_PIN) == HIGH) {
           Serial.println("AGT is ready!");
+          delay(10);
+          MySerial.flush();
           // Send message to AGT
-          delay(500);
-          MySerial.println("g]");
+          delay(1000);
+          MySerial.print("g]");
+          Serial.println("Message sent: g]");
           delay(100);
           digitalWrite(ACTIVATION_PIN, LOW);
         }
@@ -83,6 +92,7 @@ void loop() {
     } else if (incomingString == "4") {
         Serial.println("Get message from AGT");
         Serial.println("Waiting for handshake...");
+        digitalWrite(ACTIVATION_PIN, HIGH);
 
         while (digitalRead(POKE_PIN) == LOW) { // Wait for handshake
           delay(100);
@@ -90,16 +100,19 @@ void loop() {
 
         if (digitalRead(POKE_PIN) == HIGH) {
           Serial.println("AGT is ready!");
+          delay(10);
+          MySerial.flush();
           // Send message to AGT
-          delay(500);
-          MySerial.println("r]");
+          delay(1000);
+          MySerial.print("r]");
+          Serial.println("Message sent: r]");
           delay(100);
           digitalWrite(ACTIVATION_PIN, LOW);
         }
     }
   }
 
-  // if (digitalRead(POKE_PIN) == HIGH) {
+  // if (digitalRead(POKE_PIN) == HIGH && digitalRead(ACTIVATION_PIN) == LOW) {
   //   Serial.println("I've been poked! Repsonding...");
   //   digitalWrite(ACTIVATION_PIN, HIGH);
   //   delay(500);
