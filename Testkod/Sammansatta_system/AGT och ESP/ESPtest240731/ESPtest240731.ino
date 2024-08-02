@@ -112,12 +112,12 @@ void loop() {
     }
   }
 
-  // if (digitalRead(POKE_PIN) == HIGH && digitalRead(ACTIVATION_PIN) == LOW) {
-  //   Serial.println("I've been poked! Repsonding...");
-  //   digitalWrite(ACTIVATION_PIN, HIGH);
-  //   delay(500);
-  //   digitalWrite(ACTIVATION_PIN, LOW);
-  // }
+  if (digitalRead(POKE_PIN) == HIGH && digitalRead(ACTIVATION_PIN) == LOW) {
+    Serial.println("I've been poked! Repsonding...");
+    digitalWrite(ACTIVATION_PIN, HIGH);
+    delay(1000);
+    digitalWrite(ACTIVATION_PIN, LOW);
+  }
 
   // delay(1000); // Delay between messages
 }

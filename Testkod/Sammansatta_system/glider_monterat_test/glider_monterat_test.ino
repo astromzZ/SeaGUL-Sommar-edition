@@ -11,23 +11,27 @@
 
 //Pin definitions for the ESP32 S3 
 
-#define TRAN_DIR_PIN        17 //Translation motor direction pin
-#define TRAN_STEP_PIN       16 //Translation motor step pin
-#define TRAN_SLEEP_PIN      15 //Trasnlation motor sleep pin
-#define ROT_DIR_PIN          9 //Rotation motor direction pin
-#define ROT_STEP_PIN         8 //Rotation motor step pin
-#define ROT_SLEEP_PIN       18 //Rotation motor sleep pin
-#define SDA_PIN             13 //SDA pin for I2C communication
-#define SCL_PIN             14 //SCL pin for I2C communication
-// #define MODE0               10 //Microstepping mode pin 0
-// #define MODE1               11 //Microstepping mode pin 1
-// #define MODE2               12 //Microstepping mode pin 2
-#define SOFT_POT_PIN         4 //Pin connected to softpot wiper
-#define PUMP_PIN             5 //Pin connected to pump
-#define VALVE_PIN            6 //Pin connected to valve 
-#define DROPWEIGHT_PIN       2 //Pin connected to dropweight
-#define BAT_VOLTAGE_PIN     10 //Pin connected to bat voltage
+#define TRAN_DIR_PIN            17 //Translation motor direction pin
+#define TRAN_STEP_PIN           16 //Translation motor step pin
+#define TRAN_SLEEP_PIN          15 //Trasnlation motor sleep pin
+#define ROT_DIR_PIN              9 //Rotation motor direction pin
+#define ROT_STEP_PIN             8 //Rotation motor step pin
+#define ROT_SLEEP_PIN           18 //Rotation motor sleep pin
+#define SDA_PIN                 13 //SDA pin for I2C communication
+#define SCL_PIN                 14 //SCL pin for I2C communication
+// #define MODE0                10 //Microstepping mode pin 0
+// #define MODE1                11 //Microstepping mode pin 1
+// #define MODE2                12 //Microstepping mode pin 2
+#define SOFT_POT_PIN             4 //Pin connected to softpot wiper
+#define PUMP_PIN                 5 //Pin connected to pump
+#define VALVE_PIN                6 //Pin connected to valve 
+#define DROPWEIGHT_PIN           2 //Pin connected to dropweight
+#define BAT_VOLTAGE_PIN         10 //Pin connected to bat voltage
 #define BAT_VOLTAGE_MONITOR_PIN 11 //Pin connected to bat voltage monitor
+#define RX_PIN                  36 // RX pin configuration
+#define TX_PIN                  35 // TX pin configuration
+#define POKE_PIN                48 // Pin to check if the device has been poked by the AGT
+#define ACTIVATION_PIN          45 // Activation pin for initializing UART communication with AGT
 
 //.............................................................................
 
@@ -146,6 +150,8 @@ String fileName = "SD-test10_240612.txt"; //Name of the file that the data will 
 
 // Ezo_board PH = Ezo_board(99, "PH");       //create a PH circuit object, who's address is 99 and name is "PH"
 Ezo_board EC = Ezo_board(100, "EC");      //create an EC circuit object who's address is 100 and name is "EC"
+
+HardwareSerial mySerial(1); // Initialize UART1
 
 
 //.............................................................................
@@ -357,6 +363,7 @@ void getVBat() {
 
 void setup() {
     Serial.begin(115200);
+    mySerial.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN);
 
     transtepper.begin(RPM);
     transtepper.enable();
@@ -376,6 +383,9 @@ void setup() {
     digitalWrite(VALVE_PIN, LOW);
     pinMode(DROPWEIGHT_PIN, OUTPUT); 
     digitalWrite(DROPWEIGHT_PIN, LOW);
+    pinMode(POKE_PIN, INPUT);
+    pinMode(ACTIVATION_PIN, OUTPUT);
+    digitalWrite(ACTIVATION_PIN, LOW);
 
     Wire.begin(SDA_PIN, SCL_PIN);
     Wire.setClock(400000);
@@ -1144,11 +1154,44 @@ void glidercontrol(void* pvParameters) {
               //If the dropweight has been released, we want to transmit that information to land
               //so that the glider can be picked up.
               Serial.println("Dropweight released, pick me up!");
+              digitalWrite(ACTIVATION_PIN, HIGH);
+
+              while (digitalRead(POKE_PIN) == LOW) { // Might need a timeout counter here if the AGT is dead for some reason.
+                delay(100);
+              }
+
+              if (digitalRead(POKE_PIN) == HIGH) {
+                Serial.println("AGT is ready to receive message");
+                delay(1000);
+                mySerial.print("d]");
+                Serial.println("Message sent: d");
+                delay(100);
+                digitalWrite(ACTIVATION_PIN, LOW);
+              }
+
+          } else {
+            Serial.println("Dropweight not released, send position via AGT and wait for command to dive again.");
+
+            digitalWrite(ACTIVATION_PIN, HIGH);
+
+            while (digitalRead(POKE_PIN) == LOW) { // Might need a timeout counter here if the AGT is dead for some reason.
+              delay(100);
+            }
+
+            if (digitalRead(POKE_PIN) == HIGH) {
+              Serial.println("AGT is ready to receive message");
+              delay(1000);
+              mySerial.print("g]");
+              Serial.println("Message sent: g");
+              delay(100);
+              digitalWrite(ACTIVATION_PIN, LOW);
+            }
           }
 
           //Battery check. If the battery is low, we want to transmit that information to land.
 
           //Send GPS position to land along with the state of the glider.
+
 
           //Await command to dive again. 
 
