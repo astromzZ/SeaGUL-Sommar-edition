@@ -23,7 +23,7 @@ void setup() {
   translationMotor.enableOutputs();
   // Set the maximum speed in steps per second:
   translationMotor.setMaxSpeed(1000);
-  translationMotor.setPinsInverted(true, false, false)
+  translationMotor.setPinsInverted(true, false, false);
 }
 
 void loop() { 
