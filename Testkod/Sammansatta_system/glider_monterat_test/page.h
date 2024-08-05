@@ -226,6 +226,8 @@ const char page_html[] PROGMEM = R"rawliteral(
     <div class="status-card">
       <h2>Current State</h2>
       <p id="state">Idle</p>
+      <h2>Last error message</h2>
+      <p id="errorMessage">No errors</p>
     </div>
     <div class="status-card">
       <h2>Environmental Data</h2>
@@ -289,6 +291,10 @@ const char page_html[] PROGMEM = R"rawliteral(
         <div class="loading-bar" id="loadingBar"></div>
         <div class="loading-bar-text" id="loadingBarText">0%</div>
       </div>
+      <div class="button-container">
+        <button class="button pump-toggle" onclick="togglePump()">Toggle Pump</button>
+        <button class="button vent-toggle" onclick="toggleVent()">Open/Close Vent</button>
+      </div>
       <form id="adcForm" onsubmit="sendADCValue(); return false;">
         <label for="adcInput">Enter desired percentage (0-100):</label>
         <input type="number" id="adcInput" name="adcInput" min="0" max="100" required>
@@ -299,6 +305,8 @@ const char page_html[] PROGMEM = R"rawliteral(
     <div class="status-card">
       <h2>Battery Voltage</h2>
       <p id="batteryVoltage"></p>
+      <div class = "button-container">
+        <button class="button test-button" onclick="checkBat()">Check battery</button>
     </div>
 
     <div class="status-card">
@@ -383,6 +391,97 @@ const char page_html[] PROGMEM = R"rawliteral(
       });
     }
 
+    window.addEventListener('load', function() {
+        fetchErrorMessage();
+        setInterval(fetchErrorMessage, 5000); // Fetch every 5 seconds (adjust as needed)
+    });
+
+    function fetchErrorMessage() {
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState == XMLHttpRequest.DONE) {
+                if (xhr.status == 200) {
+                    var errorMessage = xhr.responseText.trim();
+                    if (errorMessage.length > 0) {
+                        document.getElementById('errorMessage').textContent = errorMessage;
+                    }
+                } else {
+                    console.error('Error fetching error message:', xhr.status);
+                }
+            }
+        };
+        xhr.open('GET', '/errorMessage', true); // Endpoint to fetch error message
+        xhr.send();
+    }
+
+    let pumpState = false;
+    let ventState = false;
+
+    function togglePump() {
+      pumpState = !pumpState;
+      const pumpButton = document.querySelector('.pump-toggle');
+      const pumpStateString = pumpState ? 'on' : 'off';
+
+      // Update button class based on state
+      if (pumpState) {
+        pumpButton.classList.remove('toggle-off');
+        pumpButton.classList.add('toggle-on');
+      } else {
+        pumpButton.classList.remove('toggle-on');
+        pumpButton.classList.add('toggle-off');
+      }
+
+      sendMessage('IDLE: Pump ' + pumpStateString);
+      fetch('/togglePump?state=' + pumpStateString, {
+        method: 'GET',
+      })
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error('Network response was not ok');
+          }
+          return response.text();
+        })
+        .then((data) => {
+          console.log('Pump state changed:', data);
+        })
+        .catch((error) => {
+          console.error('Error:', error);
+        });
+    }
+
+    function toggleVent() {
+      ventState = !ventState;
+      const ventButton = document.querySelector('.vent-toggle');
+      const ventStateString = ventState ? 'open' : 'closed';
+
+      // Update button class based on state
+      if (ventState) {
+        ventButton.classList.remove('toggle-off');
+        ventButton.classList.add('toggle-on');
+      } else {
+        ventButton.classList.remove('toggle-on');
+        ventButton.classList.add('toggle-off');
+      }
+
+      sendMessage('IDLE: Vent ' + ventStateString);
+      fetch('/toggleVent?state=' + ventStateString, {
+        method: 'GET',
+      })
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error('Network response was not ok');
+          }
+          return response.text();
+        })
+        .then((data) => {
+          console.log('Vent state changed:', data);
+        })
+        .catch((error) => {
+          console.error('Error:', error);
+        });
+    }
+
+
     // function sendMessage(msg) {
     //   var xhr = new XMLHttpRequest();
     //   xhr.open("GET", "/update?state=" + msg, true);
@@ -404,6 +503,18 @@ const char page_html[] PROGMEM = R"rawliteral(
       } else {
         modeButton.textContent = 'Light Mode';
       }
+    }
+
+    function checkBat() {
+      sendMessage('Check battery');
+      fetch('/checkBattery', { method: 'GET' })
+        .then(response => {
+          if (!response.ok) {
+            throw new Error('Network response was not ok');
+          }
+          console.log('Battery checked');
+        })
+        .catch(error => console.error('Error:', error));
     }
 
     function enterIdle() {

@@ -277,42 +277,42 @@ void setup() {
   Wire.begin(SDA_PIN, SCL_PIN);
   Wire.setClock(400000);
 
-  bool initialized = false;
-  while (!initialized) {
-      myICM.begin(Wire, AD0_VAL);
-      Serial.print(F("Initialization of the sensor returned: "));
-      Serial.println(myICM.statusString());
-      if (myICM.status != ICM_20948_Stat_Ok) {
-          Serial.println("Trying again...");
-          delay(500);
-      } else {
-          initialized = true;
-      }
-  }
+  // bool initialized = false;
+  // while (!initialized) {
+  //     myICM.begin(Wire, AD0_VAL);
+  //     Serial.print(F("Initialization of the sensor returned: "));
+  //     Serial.println(myICM.statusString());
+  //     if (myICM.status != ICM_20948_Stat_Ok) {
+  //         Serial.println("Trying again...");
+  //         delay(500);
+  //     } else {
+  //         initialized = true;
+  //     }
+  // }
 
-  Serial.println("Device connected!");
+  // Serial.println("Device connected!");
 
-  bool success = true;
-  success &= (myICM.initializeDMP() == ICM_20948_Stat_Ok);
-  success &= (myICM.enableDMPSensor(INV_ICM20948_SENSOR_GAME_ROTATION_VECTOR) == ICM_20948_Stat_Ok);
-  // success &= (myICM.setDMPODRrate(DMP_ODR_Reg_Quat6, 0) == ICM_20948_Stat_Ok);
-    // Enable the FIFO
-  success &= (myICM.enableFIFO() == ICM_20948_Stat_Ok);
+  // bool success = true;
+  // success &= (myICM.initializeDMP() == ICM_20948_Stat_Ok);
+  // success &= (myICM.enableDMPSensor(INV_ICM20948_SENSOR_GAME_ROTATION_VECTOR) == ICM_20948_Stat_Ok);
+  // // success &= (myICM.setDMPODRrate(DMP_ODR_Reg_Quat6, 0) == ICM_20948_Stat_Ok);
+  //   // Enable the FIFO
+  // success &= (myICM.enableFIFO() == ICM_20948_Stat_Ok);
 
-  // Enable the DMP
-  success &= (myICM.enableDMP() == ICM_20948_Stat_Ok);
+  // // Enable the DMP
+  // success &= (myICM.enableDMP() == ICM_20948_Stat_Ok);
 
-  // Reset DMP
-  success &= (myICM.resetDMP() == ICM_20948_Stat_Ok);
+  // // Reset DMP
+  // success &= (myICM.resetDMP() == ICM_20948_Stat_Ok);
 
-  // Reset FIFO
-  success &= (myICM.resetFIFO() == ICM_20948_Stat_Ok);
+  // // Reset FIFO
+  // success &= (myICM.resetFIFO() == ICM_20948_Stat_Ok);
 
-  if (success) {
-      Serial.println("DMP configuration successful");
-  } else {
-      Serial.println("DMP configuration failed");
-  }
+  // if (success) {
+  //     Serial.println("DMP configuration successful");
+  // } else {
+  //     Serial.println("DMP configuration failed");
+  // }
 
 
   sensorDataQueue = xQueueCreate(10, sizeof(SensorData));
@@ -321,15 +321,15 @@ void setup() {
       return;
   }
 
-  xTaskCreatePinnedToCore(
-      datagathering,     // Function to implement the task
-      "Measurement and storing of data",   // Name of the task
-      8192,      // Stack size in bytes
-      NULL,      // Task input parameter
-      1,         // Priority of the task
-      NULL,      // Task handle.
-      0          // Core where the task should run
-  );
+  // xTaskCreatePinnedToCore(
+  //     datagathering,     // Function to implement the task
+  //     "Measurement and storing of data",   // Name of the task
+  //     8192,      // Stack size in bytes
+  //     NULL,      // Task input parameter
+  //     1,         // Priority of the task
+  //     NULL,      // Task handle.
+  //     0          // Core where the task should run
+  // );
 
   xTaskCreatePinnedToCore(
       steppermotor,
@@ -338,7 +338,7 @@ void setup() {
       NULL,
       1,
       NULL,
-      1
+      0
   );
 
   WiFi.softAP(ssid, password);
@@ -378,107 +378,111 @@ void steppermotor(void* pvParameters) {
 
 
   while (true) {
-    SensorData receivedData;
-    if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY) == pdTRUE) {
+    // SensorData receivedData;
 
-        Serial.print(F("Pump state:"));
-        Serial.println(pumpState);
-        Serial.print(F(" Vent state:"));
-        Serial.println(ventState);
-        Serial.print(F(" Input value:"));
-        Serial.println(adcValue);
+    // String logData = "Pump state: " + String(pumpState) + ", Vent state: " + String(ventState);
+    // Serial.println(logData);
+    // Serial.print(F("Pump state:"));
+    // Serial.println(pumpState);
+    // Serial.print(F(" Vent state:"));
+    // Serial.println(ventState);
+    // Serial.print(F(" Input value:"));
+    // Serial.println(adcValue);
 
-        if (pumpState && ventState) {
-            errorMessage = "Both pump and vent cannot be on at the same time";
-            // Optionally, set a flag to indicate an error was sent to the webpage
-            errorMessageSent = true;
-        } else {
-            // If conditions change and the error was previously sent, mark it as resolved
-            if (errorMessageSent) {
-                errorMessage = "Error resolved"; // Set appropriate resolved message
-                errorMessageSent = false; // Reset flag
-            } else {
-                errorMessage = ""; // No error message
-            }
-        }
-    }
-  }
-}
+    Serial.println(String(pumpState) + " - " + String(ventState));
 
-void datagathering(void* pvParameters) {
-  while (true) {
-      icm_20948_DMP_data_t IMUdata;
-      myICM.readDMPdataFromFIFO(&IMUdata);
-
-    if ((myICM.status == ICM_20948_Stat_Ok) || (myICM.status == ICM_20948_Stat_FIFOMoreDataAvail)) {
-        SensorData data;
-        // myICM.getAGMT(); // The values are only updated when you call 'getAGMT'
-
-        if ((IMUdata.header & DMP_header_bitmap_Quat6) > 0) {
-          // Q0 value is computed from this equation: Q0^2 + Q1^2 + Q2^2 + Q3^2 = 1.
-          // In case of drift, the sum will not add to 1, therefore, quaternion data need to be corrected with right bias values.
-          // The quaternion data is scaled by 2^30.
-
-          //Serial.printf("Quat6 data is: Q1:%ld Q2:%ld Q3:%ld\r\n", data.Quat6.Data.Q1, data.Quat6.Data.Q2, data.Quat6.Data.Q3);
-
-          // Scale to +/- 1
-          double q1 = ((double)IMUdata.Quat6.Data.Q1) / 1073741824.0; // Convert to double. Divide by 2^30
-          double q2 = ((double)IMUdata.Quat6.Data.Q2) / 1073741824.0; // Convert to double. Divide by 2^30
-          double q3 = ((double)IMUdata.Quat6.Data.Q3) / 1073741824.0; // Convert to double. Divide by 2^30
-
-          double q0 = sqrt(1.0 - ((q1 * q1) + (q2 * q2) + (q3 * q3)));
-
-          double q2sqr = q2 * q2;
-
-          // roll (x-axis rotation)
-          double t0 = +2.0 * (q0 * q1 + q2 * q3);
-          double t1 = +1.0 - 2.0 * (q1 * q1 + q2sqr);
-          data.roll = atan2(t0, t1) * 180.0 / PI;
-
-          // pitch (y-axis rotation)
-          double t2 = +2.0 * (q0 * q2 - q3 * q1);
-          t2 = t2 > 1.0 ? 1.0 : t2;
-          t2 = t2 < -1.0 ? -1.0 : t2;
-          data.pitch = asin(t2) * 180.0 / PI;
-
-          // yaw (z-axis rotation)
-          double t3 = +2.0 * (q0 * q3 + q1 * q2);
-          double t4 = +1.0 - 2.0 * (q2sqr + q3 * q3);
-          data.yaw = atan2(t3, t4) * 180.0 / PI;
-
-
-          // Calculate display pitch and roll
-          displaypitch = data.pitch;
-          displayroll = data.roll;
-          displayyaw = data.yaw;
-
-          // Psensor.read();
-
-          // data.depth = Psensor.depth();
-          // data.pressure = Psensor.pressure();
-
-          // data.potentiometer = analogRead(SOFT_POT_PIN);
-
-          if (xQueueSend(sensorDataQueue, &data, portMAX_DELAY) != pdPASS) {
-              Serial.println("Failed to send data to queue");
-          }
-
-          // Tsensor.read();
-
-          // float temperature = Tsensor.temperature(); 
-
-          // String logData = "Pitch: " + String(data.pitch * 180 / PI) + " degrees, " +
-          //                  "Roll: " + String(data.roll * 180 / PI) + " degrees, ";
-                          //  "Depth: " + String(data.depth) + " m, " +
-                          //  "Pressure: " + String(data.pressure) + " mbar, " +
-                          //  "Temperature: " + String(temperature) + " Celsius";
-                          //  "Current: " + String(current) + " A";
-          // writeSD(logData);
-        }
-
+    // if (pumpState && ventState) {
+    //     errorMessage = "Both pump and vent cannot be on at the same time";
+    //     Serial.println(errorMessage + " - " + String(pumpState) + " - " + String(ventState));
+    //     // Optionally, set a flag to indicate an error was sent to the webpage
+    //     errorMessageSent = true;
     // } else {
-    //     Serial.println("Sensor data not ready");
-    }
-    vTaskDelay(pdMS_TO_TICKS(10)); // Adding a delay to reduce bus congestion and improve stability
+    //     // If conditions change and the error was previously sent, mark it as resolved
+    //     if (errorMessageSent) {
+    //         errorMessage = "Error resolved"; // Set appropriate resolved message
+    //         errorMessageSent = false; // Reset flag
+    //     } else {
+    //         errorMessage = ""; // No error message
+    //     }
+    // }
+
   }
 }
+
+// void datagathering(void* pvParameters) {
+//   while (true) {
+//       // icm_20948_DMP_data_t IMUdata;
+//       // myICM.readDMPdataFromFIFO(&IMUdata);
+
+//     // if ((myICM.status == ICM_20948_Stat_Ok) || (myICM.status == ICM_20948_Stat_FIFOMoreDataAvail)) {
+//     //     SensorData data;
+//     //     // myICM.getAGMT(); // The values are only updated when you call 'getAGMT'
+
+//     //     // if ((IMUdata.header & DMP_header_bitmap_Quat6) > 0) {
+//     //     //   // Q0 value is computed from this equation: Q0^2 + Q1^2 + Q2^2 + Q3^2 = 1.
+//     //     //   // In case of drift, the sum will not add to 1, therefore, quaternion data need to be corrected with right bias values.
+//     //     //   // The quaternion data is scaled by 2^30.
+
+//     //     //   //Serial.printf("Quat6 data is: Q1:%ld Q2:%ld Q3:%ld\r\n", data.Quat6.Data.Q1, data.Quat6.Data.Q2, data.Quat6.Data.Q3);
+
+//     //     //   // Scale to +/- 1
+//     //     //   double q1 = ((double)IMUdata.Quat6.Data.Q1) / 1073741824.0; // Convert to double. Divide by 2^30
+//     //     //   double q2 = ((double)IMUdata.Quat6.Data.Q2) / 1073741824.0; // Convert to double. Divide by 2^30
+//     //     //   double q3 = ((double)IMUdata.Quat6.Data.Q3) / 1073741824.0; // Convert to double. Divide by 2^30
+
+//     //     //   double q0 = sqrt(1.0 - ((q1 * q1) + (q2 * q2) + (q3 * q3)));
+
+//     //     //   double q2sqr = q2 * q2;
+
+//     //     //   // roll (x-axis rotation)
+//     //     //   double t0 = +2.0 * (q0 * q1 + q2 * q3);
+//     //     //   double t1 = +1.0 - 2.0 * (q1 * q1 + q2sqr);
+//     //     //   data.roll = atan2(t0, t1) * 180.0 / PI;
+
+//     //     //   // pitch (y-axis rotation)
+//     //     //   double t2 = +2.0 * (q0 * q2 - q3 * q1);
+//     //     //   t2 = t2 > 1.0 ? 1.0 : t2;
+//     //     //   t2 = t2 < -1.0 ? -1.0 : t2;
+//     //     //   data.pitch = asin(t2) * 180.0 / PI;
+
+//     //     //   // yaw (z-axis rotation)
+//     //     //   double t3 = +2.0 * (q0 * q3 + q1 * q2);
+//     //     //   double t4 = +1.0 - 2.0 * (q2sqr + q3 * q3);
+//     //     //   data.yaw = atan2(t3, t4) * 180.0 / PI;
+
+
+//     //     //   // Calculate display pitch and roll
+//     //     //   displaypitch = data.pitch;
+//     //     //   displayroll = data.roll;
+//     //     //   displayyaw = data.yaw;
+
+//     //     //   // Psensor.read();
+
+//     //     //   // data.depth = Psensor.depth();
+//     //     //   // data.pressure = Psensor.pressure();
+
+//     //     //   // data.potentiometer = analogRead(SOFT_POT_PIN);
+
+//     //     //   // if (xQueueSend(sensorDataQueue, &data, portMAX_DELAY) != pdPASS) {
+//     //     //   //     Serial.println("Failed to send data to queue");
+//     //     //   // }
+
+//     //     //   // Tsensor.read();
+
+//     //     //   // float temperature = Tsensor.temperature(); 
+
+//     //     //   // String logData = "Pitch: " + String(data.pitch * 180 / PI) + " degrees, " +
+//     //     //   //                  "Roll: " + String(data.roll * 180 / PI) + " degrees, ";
+//     //                       //  "Depth: " + String(data.depth) + " m, " +
+//     //                       //  "Pressure: " + String(data.pressure) + " mbar, " +
+//     //                       //  "Temperature: " + String(temperature) + " Celsius";
+//     //                       //  "Current: " + String(current) + " A";
+//     //       // writeSD(logData);
+//     //     }
+
+//     // // } else {
+//     // //     Serial.println("Sensor data not ready");
+//     // }
+//     // vTaskDelay(pdMS_TO_TICKS(10)); // Adding a delay to reduce bus congestion and improve stability
+//   }
+// }

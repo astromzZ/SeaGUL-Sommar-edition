@@ -539,7 +539,7 @@ void loop()
         // Check battery voltage now we are drawing current for the GNSS
         // If voltage is low, stop looking for GNSS and go to sleep
 
-
+      }
       if (agtFixType == 3) // Check if we got a valid 3D fix
       {
         // Get the time and position etc.
@@ -1148,6 +1148,6 @@ void loop()
       loop_step = loop_init;
 
       break; // End of case wake
-
+    
   } // End of switch (loop_step)
 } // End of loop()

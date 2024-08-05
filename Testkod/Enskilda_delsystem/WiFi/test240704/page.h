@@ -440,7 +440,7 @@ const char page_html[] PROGMEM = R"rawliteral(
         pumpButton.classList.add('toggle-off');
       }
 
-      sendMessage('Pump ' + pumpStateString);
+      sendMessage('IDLE: Pump ' + pumpStateString);
       fetch('/togglePump?state=' + pumpStateString, {
         method: 'GET',
       })
@@ -472,7 +472,7 @@ const char page_html[] PROGMEM = R"rawliteral(
         ventButton.classList.add('toggle-off');
       }
 
-      sendMessage('Vent ' + ventStateString);
+      sendMessage('IDLE: Vent ' + ventStateString);
       fetch('/toggleVent?state=' + ventStateString, {
         method: 'GET',
       })

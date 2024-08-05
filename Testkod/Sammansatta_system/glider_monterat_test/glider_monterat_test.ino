@@ -79,6 +79,14 @@ bool movingForward = false;
 bool movingBackward = false;
 
 
+//Vent and pump states
+bool pumpState = false; // false = off, true = on
+bool ventState = false; // false = closed, true = open
+String errorMessage = "";
+bool errorMessageSent = false;
+
+bool batteryWiFiCheck = false;
+
 //Values that are displayed on the SeaGUL webpage
 float displaypitch = 0;
 float displayroll = 0;
@@ -86,6 +94,8 @@ float displayyaw = 0;
 float displaypressure = 0;
 float displaytemperature = 0;
 float displaypotentiometer = 0;
+float displayconductivity = 0;
+float displaybattery = 0;
 
 //Used to keep track on where the weight is positioned
 float nextPosition = 0;
@@ -301,6 +311,44 @@ void handleStopMoveBackward() {
   server.send(200, "text/plain", "Move Backward stopped");
 }
 
+void handleTogglePump() {
+  if (server.hasArg("state")) {
+    String state = server.arg("state");
+    if (state == "on") {
+      pumpState = true;
+    } else if (state == "off") {
+      pumpState = false;
+    }
+    server.send(200, "text/plain", "Pump state: " + state);
+  } else {
+    server.send(400, "text/plain", "Bad Request");
+  }
+}
+
+void handleToggleVent() {
+  if (server.hasArg("state")) {
+    String state = server.arg("state");
+    if (state == "open") {
+      ventState = true;
+    } else if (state == "closed") {
+      ventState = false;
+    }
+    server.send(200, "text/plain", "Pump state: " + state);
+  } else {
+    server.send(400, "text/plain", "Bad Request");
+  }
+}
+
+void handleErrorMessage() {
+    server.send(200, "text/plain", errorMessage); // Serve the captured error message
+    errorMessage = ""; // Clear the error message after serving once
+}
+
+void handleCheckBattery() {
+    batteryWiFiCheck = true;
+    server.send(200, "text/plain", "Battery voltage: " + String(displaybattery) + "V");
+}
+
 // Function to generate random number 
 float randomFloat(float minValue, float maxValue) {
   return minValue + (float)rand() / ((float)RAND_MAX / (maxValue - minValue));
@@ -336,11 +384,11 @@ void handleData() {
   json += "\"devices\":" + getConnectedDevices() + ",";
   json += "\"waterTemperature\":" + String(displaytemperature) + ",";
   json += "\"pressure\":" + String(displaypressure) + ",";
-  json += "\"salinity\":" + String(randomFloat(30.0, 50.0)) + ",";
+  json += "\"salinity\":" + String(displayconductivity) + ",";
   json += "\"pitch\":" + String(displaypitch) + ",";
   json += "\"roll\":" + String(displayroll) + ",";
   json += "\"yaw\":" + String(displayyaw) + ",";
-  json += "\"batteryVoltage\":" + String(randomFloat(22.0, 38.5)) + ",";
+  json += "\"batteryVoltage\":" + String(displaybattery) + ",";
   json += "\"compassCourse\":" + String(randomFloat(0.0, 360.0)) + ",";
   json += "\"gnssCoordinates\":\"" + String(randomFloat(-90.0, 90.0), 6) + ", " + String(randomFloat(-180.0, 180.0), 6) + "\",";
   json += "\"internalTemperature\":" + String(randomFloat(15.0, 25.0)) + ",";
@@ -354,9 +402,10 @@ void handleData() {
 void getVBat() {
   digitalWrite(BAT_VOLTAGE_MONITOR_PIN, HIGH); // Enable the voltage monitor
 
-  delay(100); // Wait for the voltage to stabilize
+  delay(500); // Wait for the voltage to stabilize
   // Read the battery voltage
   Vbat = ((float)analogRead(BAT_VOLTAGE_PIN)) * 12 * 3.3 / 4095; // Convert the analog reading to voltage 10/120
+  displaybattery = Vbat;
 
   digitalWrite(BAT_VOLTAGE_MONITOR_PIN, LOW); // Disable the voltage monitor
 }
@@ -386,6 +435,9 @@ void setup() {
     pinMode(POKE_PIN, INPUT);
     pinMode(ACTIVATION_PIN, OUTPUT);
     digitalWrite(ACTIVATION_PIN, LOW);
+    pinMode(BAT_VOLTAGE_PIN, INPUT);
+    pinMode(BAT_VOLTAGE_MONITOR_PIN, OUTPUT);
+    digitalWrite(BAT_VOLTAGE_MONITOR_PIN, LOW);
 
     Wire.begin(SDA_PIN, SCL_PIN);
     Wire.setClock(400000);
@@ -486,7 +538,7 @@ void setup() {
 
     xTaskCreatePinnedToCore(
         glidercontrol,                      // Function to implement the task
-        "descision making for glider",      // Name of the task
+        "Descision making for glider",      // Name of the task
         4096,                               // Stack size in bytes
         NULL,                               // Task input parameter
         1,                                  // Priority of the task
@@ -511,10 +563,13 @@ void setup() {
     server.on("/stopRotateRight", handleStopRotateRight);
     server.on("/stopMoveForward", handleStopMoveForward);
     server.on("/stopMoveBackward", handleStopMoveBackward);
+    server.on("/togglePump", handleTogglePump);
+    server.on("/toggleVent", handleToggleVent);
+    server.on("/errorMessage", handleErrorMessage);
+    server.on("/checkBattery", handleCheckBattery);
     
     server.begin();
     Serial.println("HTTP server started");
-
 
 }
 
@@ -746,6 +801,7 @@ void receive_response(Ezo_board &ECsensor)  // Function to decode the response a
   if (error == Ezo_board::SUCCESS) {
     // Serial.println(sensordata_buffer);   // Print the received data
     lastconductivityreading = atof(sensordata_buffer);
+    displayconductivity = lastconductivityreading;
   } else {
     switch (error) {
       case Ezo_board::FAIL:
@@ -786,6 +842,8 @@ void glidercontrol(void* pvParameters) {
   float previousDepth = 0; // Variable to store the previous depth
   unsigned volatile long previousTime = 0; // Variable to store the previous time
   unsigned volatile long previousPrintTime = 0; // Variable to store the previous time the state was printed
+  unsigned volatile long previousBatteryCheck = 0; // Variable to store the previous time the battery level was checked
+  const unsigned long BAT_CHECK_INTERVAL = 60000 * 5; // Interval to check the battery level (in milliseconds) (5 minutes)
   const unsigned long ONE_HOUR = 3600000; // 1 hour in milliseconds, used to check if the glider has been going down/up for too long
   const unsigned long sampleInterval = 10000; //Interval to sample the depth (in milliseconds)
   const unsigned long statePrintInterval = 5000; //Interval to check if the glider is moving upwards instead of downwards (in milliseconds)
@@ -830,6 +888,17 @@ void glidercontrol(void* pvParameters) {
             digitalWrite(VALVE_PIN, LOW);
           }
 
+          // Check the battery voltage
+          if (currentMillis - previousBatteryCheck >= BAT_CHECK_INTERVAL || batteryWiFiCheck) {
+            getVBat();
+            previousBatteryCheck = currentMillis;
+            batteryWiFiCheck = false;
+
+            if (Vbat < V_LOW) {
+              errorMessage = "Low battery voltage!";
+            }
+          }
+
           //It is now possible to move the stepper motors manually through the SeaGUL webpage.
           if (movingForward) {
               float translation_direction = 1; // 1 = forward, -1 = backward
@@ -839,10 +908,7 @@ void glidercontrol(void* pvParameters) {
                   translationmotorRunning = true;
               }
 
-              if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
-                controlTranslationMotor(translation_direction, currentPosition, translationmotorRunning); //Move the motor
-              }
-
+              controlTranslationMotor(translation_direction, currentPosition, translationmotorRunning); //Move the motor
 
           } else {
               if (translationmotorRunning) { //Stop the motor
@@ -859,9 +925,7 @@ void glidercontrol(void* pvParameters) {
                   translationmotorRunning = true;
               }
 
-              if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
-                controlTranslationMotor(translation_direction, currentPosition, translationmotorRunning); //Move the motor
-              }
+              controlTranslationMotor(translation_direction, currentPosition, translationmotorRunning); //Move the motor
 
           } else {
             if (translationmotorRunning) { //Stop the motor
@@ -869,6 +933,30 @@ void glidercontrol(void* pvParameters) {
                 translationmotorRunning = false;
             }
           }
+
+          // It is also possible to control the pump and vent of the glider manually through the SeaGUL webpage.
+          if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
+            if (receivedData.potentiometer < 3000) {
+              if (ventState) {
+                digitalWrite(VALVE_PIN, HIGH);
+              } else {
+                digitalWrite(VALVE_PIN, LOW);
+              }
+            } else {
+              errorMessage = "The reservoir is full.";
+            }
+
+            if (receivedData.potentiometer > 200) {
+              if (pumpState) {
+                digitalWrite(PUMP_PIN, HIGH);
+              } else {
+                digitalWrite(PUMP_PIN, LOW);
+              }
+            } else {
+              errorMessage = "The reservoir is empty.";
+            }
+          }
+
 
           if (Serial.available() > 0) {
             char incomingChar = Serial.read();
@@ -989,7 +1077,7 @@ void glidercontrol(void* pvParameters) {
 
               }
 
-              //UNCOMENT THIS IF YOU WANT TO USE THE WARNING SYSTEM!
+              //UNCOMMENT THIS IF YOU WANT TO USE THE WARNING SYSTEM! NOT TESTED YET!
               // if (currentMillis - previousTime >= sampleInterval) {
               //   warningFlag = false;
               //   float depthChangeRate = (receivedData.depth - previousDepth) / ((glideDownTime - previousTime)/1000);
@@ -1011,7 +1099,7 @@ void glidercontrol(void* pvParameters) {
               //     }                            
               //   }
               // }
-              //UNCOCMENT THIS IF YOU WANT TO USE THE WARNING SYSTEM!
+              //UNCOMMMENT THIS IF YOU WANT TO USE THE WARNING SYSTEM! NOT TESTED YET!
               
               if (currentMillis - stateStartMillis >= ONE_HOUR) {
                   Serial.println("To much time has passed, releasing weight by moving to DropWeight state.");
@@ -1106,7 +1194,7 @@ void glidercontrol(void* pvParameters) {
 
               }
 
-              //UNCOMENT THIS IF YOU WANT TO USE THE WARNING SYSTEM!
+              //UNCOMENT THIS IF YOU WANT TO USE THE WARNING SYSTEM! NOT TESTED YET!
               // if (currentMillis - previousTime >= sampleInterval) {
               //   warningFlag = false;
               //   float depthChangeRate = (receivedData.depth - previousDepth) / ((millis() - previousTime)/1000);
@@ -1128,7 +1216,7 @@ void glidercontrol(void* pvParameters) {
               //     }
               //   }
               // }
-              //UNCOCMENT THIS IF YOU WANT TO USE THE WARNING SYSTEM!
+              //UNCOCMENT THIS IF YOU WANT TO USE THE WARNING SYSTEM! NOT TESTED YET!
 
               //Check if too much time has passed for the glider to rise to the surface. 
               if (currentMillis - stateStartMillis >= ONE_HOUR) {
@@ -1150,43 +1238,43 @@ void glidercontrol(void* pvParameters) {
           rollSP = 0; // Setpoint for roll
 
           //Check if the dropweight has been released. If not, buissness as usual.
-          if (dropweightReleased) {
-              //If the dropweight has been released, we want to transmit that information to land
-              //so that the glider can be picked up.
-              Serial.println("Dropweight released, pick me up!");
-              digitalWrite(ACTIVATION_PIN, HIGH);
+          // if (dropweightReleased) {
+          //     //If the dropweight has been released, we want to transmit that information to land
+          //     //so that the glider can be picked up.
+          //     Serial.println("Dropweight released, pick me up!");
+          //     digitalWrite(ACTIVATION_PIN, HIGH);
 
-              while (digitalRead(POKE_PIN) == LOW) { // Might need a timeout counter here if the AGT is dead for some reason.
-                delay(100);
-              }
+          //     while (digitalRead(POKE_PIN) == LOW) { // Might need a timeout counter here if the AGT is dead for some reason.
+          //       delay(100);
+          //     }
 
-              if (digitalRead(POKE_PIN) == HIGH) {
-                Serial.println("AGT is ready to receive message");
-                delay(1000);
-                mySerial.print("d]");
-                Serial.println("Message sent: d");
-                delay(100);
-                digitalWrite(ACTIVATION_PIN, LOW);
-              }
+          //     if (digitalRead(POKE_PIN) == HIGH) {
+          //       Serial.println("AGT is ready to receive message");
+          //       delay(1000);
+          //       mySerial.print("d]");
+          //       Serial.println("Message sent: d");
+          //       delay(100);
+          //       digitalWrite(ACTIVATION_PIN, LOW);
+          //     }
 
-          } else {
-            Serial.println("Dropweight not released, send position via AGT and wait for command to dive again.");
+          // } else {
+          //   Serial.println("Dropweight not released, send position via AGT and wait for command to dive again.");
 
-            digitalWrite(ACTIVATION_PIN, HIGH);
+          //   digitalWrite(ACTIVATION_PIN, HIGH);
 
-            while (digitalRead(POKE_PIN) == LOW) { // Might need a timeout counter here if the AGT is dead for some reason.
-              delay(100);
-            }
+          //   while (digitalRead(POKE_PIN) == LOW) { // Might need a timeout counter here if the AGT is dead for some reason.
+          //     delay(100);
+          //   }
 
-            if (digitalRead(POKE_PIN) == HIGH) {
-              Serial.println("AGT is ready to receive message");
-              delay(1000);
-              mySerial.print("g]");
-              Serial.println("Message sent: g");
-              delay(100);
-              digitalWrite(ACTIVATION_PIN, LOW);
-            }
-          }
+          //   if (digitalRead(POKE_PIN) == HIGH) {
+          //     Serial.println("AGT is ready to receive message");
+          //     delay(1000);
+          //     mySerial.print("g]");
+          //     Serial.println("Message sent: g");
+          //     delay(100);
+          //     digitalWrite(ACTIVATION_PIN, LOW);
+          //   }
+          // }
 
           //Battery check. If the battery is low, we want to transmit that information to land.
 
