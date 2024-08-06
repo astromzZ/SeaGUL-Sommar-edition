@@ -31,7 +31,7 @@ void loop() {
   translationMotor.setCurrentPosition(0);
 
   // Run the motor forward at 200 steps/second until the motor reaches 400 steps (2 revolutions):
-  while(translationMotor.currentPosition() != 800)
+  while(translationMotor.currentPosition() != 400)
   {
     translationMotor.setSpeed(800);
     translationMotor.runSpeed();
@@ -43,7 +43,7 @@ void loop() {
   translationMotor.setCurrentPosition(0);
 
   // Run the motor backwards at 600 steps/second until the motor reaches -200 steps (1 revolution):
-  while(translationMotor.currentPosition() != -800) 
+  while(translationMotor.currentPosition() != -400) 
   {
     translationMotor.setSpeed(-800);
     translationMotor.runSpeed();

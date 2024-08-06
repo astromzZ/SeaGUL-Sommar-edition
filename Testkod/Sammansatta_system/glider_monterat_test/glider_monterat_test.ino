@@ -695,7 +695,7 @@ void controlRotationMotor (float &rotation_direction, float &currentDegree, bool
 
     if (rotation_direction > 0) {
         if (nextDegree < ROTATION_MAX_DEGREE && nextDegree > ROTATION_MAX_DEGREE) {
-            rotstepper.setMicrostep(MICROSTEP);
+            // rotstepper.setMicrostep(MICROSTEP);
             rotstepper.move(ROTATIONMOTOR_STEP_SIZE);
             currentDegree = nextDegree;
             Serial.println(currentDegree);
@@ -707,7 +707,7 @@ void controlRotationMotor (float &rotation_direction, float &currentDegree, bool
             }
 
             if ((rotation_direction > 0 && currentDegree >= ROTATION_MIN_DEGREE)) {
-                rotstepper.setMicrostep(MICROSTEP);
+                // rotstepper.setMicrostep(MICROSTEP);
                 rotstepper.move(ROTATIONMOTOR_STEP_SIZE);
                 currentDegree = nextDegree;
                 Serial.println(currentDegree);

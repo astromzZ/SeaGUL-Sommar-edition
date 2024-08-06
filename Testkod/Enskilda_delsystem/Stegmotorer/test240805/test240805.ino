@@ -27,6 +27,12 @@ enum GliderState {
 };
 GliderState gliderState = Idle; // Initial state of the glider
 
+bool rotatingLeft = false;
+bool rotatingRight = false;
+bool movingForward = false;
+bool movingBackward = false;
+bool translationMotorRunning = false;
+
 //NETWORKING
 
 // Network credentials
@@ -155,43 +161,7 @@ void handleStopMoveBackward() {
   server.send(200, "text/plain", "Move Backward stopped");
 }
 
-void handleTogglePump() {
-  if (server.hasArg("state")) {
-    String state = server.arg("state");
-    if (state == "on") {
-      pumpState = true;
-    } else if (state == "off") {
-      pumpState = false;
-    }
-    server.send(200, "text/plain", "Pump state: " + state);
-  } else {
-    server.send(400, "text/plain", "Bad Request");
-  }
-}
 
-void handleToggleVent() {
-  if (server.hasArg("state")) {
-    String state = server.arg("state");
-    if (state == "open") {
-      ventState = true;
-    } else if (state == "closed") {
-      ventState = false;
-    }
-    server.send(200, "text/plain", "Pump state: " + state);
-  } else {
-    server.send(400, "text/plain", "Bad Request");
-  }
-}
-
-void handleErrorMessage() {
-    server.send(200, "text/plain", errorMessage); // Serve the captured error message
-    errorMessage = ""; // Clear the error message after serving once
-}
-
-void handleCheckBattery() {
-    batteryWiFiCheck = true;
-    server.send(200, "text/plain", "Battery voltage: " + String(displaybattery) + "V");
-}
 
 // Function to generate random number 
 float randomFloat(float minValue, float maxValue) {
@@ -226,19 +196,19 @@ void handleData() {
   String json = "{";
   json += "\"currentState\":\"" + currentState + "\",";
   json += "\"devices\":" + getConnectedDevices() + ",";
-  json += "\"waterTemperature\":" + String(displaytemperature) + ",";
-  json += "\"pressure\":" + String(displaypressure) + ",";
-  json += "\"salinity\":" + String(displayconductivity) + ",";
-  json += "\"pitch\":" + String(displaypitch) + ",";
-  json += "\"roll\":" + String(displayroll) + ",";
-  json += "\"yaw\":" + String(displayyaw) + ",";
-  json += "\"batteryVoltage\":" + String(displaybattery) + ",";
+  json += "\"waterTemperature\":" + String(randomFloat(0.0, 3.3)) + ",";
+  json += "\"pressure\":" + String(randomFloat(0.0, 3.3)) + ",";
+  json += "\"salinity\":" + String(randomFloat(0.0, 3.3)) + ",";
+  json += "\"pitch\":" + String(randomFloat(0.0, 3.3)) + ",";
+  json += "\"roll\":" + String(randomFloat(0.0, 3.3)) + ",";
+  json += "\"yaw\":" + String(randomFloat(0.0, 3.3)) + ",";
+  json += "\"batteryVoltage\":" + String(randomFloat(0.0, 3.3)) + ",";
   json += "\"compassCourse\":" + String(randomFloat(0.0, 360.0)) + ",";
   json += "\"gnssCoordinates\":\"" + String(randomFloat(-90.0, 90.0), 6) + ", " + String(randomFloat(-180.0, 180.0), 6) + "\",";
   json += "\"internalTemperature\":" + String(randomFloat(15.0, 25.0)) + ",";
   json += "\"internalPressure\":" + String(randomFloat(0.0, 1.0)) + ",";
   json += "\"internalHumidity\":" + String(randomFloat(10.0, 30.0)) + ",";
-  json += "\"adcValue\":" + String(displaypotentiometer);
+  json += "\"adcValue\":" + String(randomFloat(0.0, 3.3));
   json += "}";
   server.send(200, "application/json", json);
 }
@@ -247,11 +217,67 @@ void handleData() {
 void setup () {
   Serial.begin(115200);
   pinMode(TRAN_SLEEP_PIN, OUTPUT);
-  digitalWrite(TRAN_SLEEP_PIN, HIGH);
+//   digitalWrite(TRAN_SLEEP_PIN, HIGH);
   translationMotor.enableOutputs();
   // Set the maximum speed in steps per second:
   translationMotor.setMaxSpeed(1000);
-  translationMotor.setPinsInverted(true, false, false);
+//   translationMotor.setPinsInverted(true, false, false);
+
+  WiFi.softAP(ssid, password);
+  WiFi.softAPConfig(local_IP, gateway, subnet);
+
+  server.on("/", handleRoot);
+  server.on("/update", handleUpdate);
+  server.on("/data", handleData);
+  server.on("/idle", handleIdle);
+  server.on("/initiateDive", handleInitiateDive);
+  server.on("/calibrate", handleCalibrate);
+  server.on("/rotateLeft", handleRotateLeft);
+  server.on("/rotateRight", handleRotateRight);
+  server.on("/moveForward", handleMoveForward);
+  server.on("/moveBackward", handleMoveBackward);
+  server.on("/stopRotateLeft", handleStopRotateLeft);
+  server.on("/stopRotateRight", handleStopRotateRight);
+  server.on("/stopMoveForward", handleStopMoveForward);
+  server.on("/stopMoveBackward", handleStopMoveBackward);
+
+  server.begin();
+  Serial.println("HTTP server started");
 }
+
+void loop() {
+    server.handleClient();
+
+    if (movingForward) {
+        
+        if (!translationMotorRunning) {
+        digitalWrite(TRAN_SLEEP_PIN, HIGH);
+        translationMotorRunning = true;
+        }
+
+        translationMotor.setSpeed(800);
+        translationMotor.runSpeed();
+    } else if (translationMotorRunning) {
+        digitalWrite(TRAN_SLEEP_PIN, LOW);
+        translationMotorRunning = false;
+    }
+
+    if (movingBackward) {
+        
+        if (!translationMotorRunning) {
+        digitalWrite(TRAN_SLEEP_PIN, HIGH);
+        translationMotorRunning = true;
+        }
+
+        translationMotor.setSpeed(-800);
+        translationMotor.runSpeed();
+
+    } else if (translationMotorRunning) {
+        digitalWrite(TRAN_SLEEP_PIN, LOW);
+        translationMotorRunning = false;
+    }
+}
+
+
 
 
