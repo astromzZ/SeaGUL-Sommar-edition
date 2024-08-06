@@ -29,9 +29,10 @@ GliderState gliderState = Idle; // Initial state of the glider
 
 bool rotatingLeft = false;
 bool rotatingRight = false;
-bool movingForward = false;
+bool volatile movingForward = false;
 bool movingBackward = false;
 bool translationMotorRunning = false;
+bool positionSet = false;
 
 //NETWORKING
 
@@ -119,6 +120,7 @@ void handleRotateRight() {
 // Handle when move forward button is pressed
 void handleMoveForward() {
   movingForward = true;
+  movingBackward = false;
 //   Serial.println("Move Forward command received");
 //   Serial.print("movingForward: ");
 //   Serial.println(movingForward);
@@ -128,6 +130,7 @@ void handleMoveForward() {
 // Handle when move backward button is pressed
 void handleMoveBackward() {
   movingBackward = true;
+  movingForward = false;
 //   Serial.println("Move Backward command received");
 //   Serial.print("movingBackward: ");
 //   Serial.println(movingBackward);
@@ -221,7 +224,7 @@ void setup () {
   translationMotor.enableOutputs();
   // Set the maximum speed in steps per second:
   translationMotor.setMaxSpeed(1000);
-//   translationMotor.setPinsInverted(true, false, false);
+  translationMotor.setPinsInverted(true, false, false);
 
   WiFi.softAP(ssid, password);
   WiFi.softAPConfig(local_IP, gateway, subnet);
@@ -246,31 +249,44 @@ void setup () {
 }
 
 void loop() {
+
+    if (!positionSet) {
+        translationMotor.setCurrentPosition(0);
+        positionSet = true;
+    }
+
     server.handleClient();
 
     if (movingForward) {
+        float translation_direction = 1;
         
         if (!translationMotorRunning) {
         digitalWrite(TRAN_SLEEP_PIN, HIGH);
         translationMotorRunning = true;
         }
 
-        translationMotor.setSpeed(800);
-        translationMotor.runSpeed();
-    } else if (translationMotorRunning) {
-        digitalWrite(TRAN_SLEEP_PIN, LOW);
-        translationMotorRunning = false;
-    }
-
-    if (movingBackward) {
+        translationMotor.setSpeed(400);
+        if (translationMotor.currentPosition() >= 0 && translationMotor.currentPosition() <= 1000) {
+            translationMotor.runSpeed();
+        } else if (translationMotor.currentPosition() <= 0 && translation_direction == 1) {
+            translationMotor.runSpeed();
+        }
+        Serial.println("Current position: " + String(translationMotor.currentPosition()));
+    } else if (movingBackward) {
+        float translation_direction = -1;
         
         if (!translationMotorRunning) {
         digitalWrite(TRAN_SLEEP_PIN, HIGH);
         translationMotorRunning = true;
         }
 
-        translationMotor.setSpeed(-800);
-        translationMotor.runSpeed();
+        translationMotor.setSpeed(-400);
+        if (translationMotor.currentPosition() >= 0 && translationMotor.currentPosition() <= 1000) {
+            translationMotor.runSpeed();
+        } else if (translationMotor.currentPosition() >= 1000 && translation_direction == -1) {
+            translationMotor.runSpeed();
+        }
+        Serial.println("Current position: " + String(translationMotor.currentPosition()));
 
     } else if (translationMotorRunning) {
         digitalWrite(TRAN_SLEEP_PIN, LOW);
