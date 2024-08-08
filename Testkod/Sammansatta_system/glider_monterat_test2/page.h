@@ -348,6 +348,7 @@ const char page_html[] PROGMEM = R"rawliteral(
         <button class="button initiate-dive" onclick="enterDive()">Initiate Dive</button>
         <button class="button calibrate" onclick="enterCalibration()">Calibrate</button>
         <button class="button test-button" onclick="enterSetup()">Setup</button>
+        <button class="button test-button" onclick="dropweight()">Dropweight</button>
       </div>
       <div class="button-container">
         <button class="button test-button" onclick="sendMessage('Test 1')">Test 1</button>
@@ -381,7 +382,7 @@ const char page_html[] PROGMEM = R"rawliteral(
         });
 
         document.getElementById('waterTemperature').innerText = data.waterTemperature + " °C";
-        document.getElementById('pressure').innerText = data.pressure + " bar";
+        document.getElementById('pressure').innerText = data.pressure + " m";
         document.getElementById('salinity').innerText = data.salinity + " ppt";
         document.getElementById('pitch').innerText = data.pitch + "°";
         document.getElementById('roll').innerText = data.roll + "°";
@@ -392,8 +393,8 @@ const char page_html[] PROGMEM = R"rawliteral(
         document.getElementById('internalTemperature').innerText = data.internalTemperature + " °C";
         document.getElementById('internalPressure').innerText = data.internalPressure + " bar";
         document.getElementById('internalHumidity').innerText = data.internalHumidity + " %";
-        document.getElementById('rotationAngle').innerText = data.rotationAngle + "°";
-        document.getElementById('translationPosition').innerText = data.translationPosition + " cm";
+        document.getElementById('rotationAngle').innerText = data.rotationAngle + " steps";
+        document.getElementById('translationPosition').innerText = data.translationPosition + " steps";
 
         const adcValue = data.adcValue;
         const percentage = (adcValue / 4095) * 100; // Calculate percentage
@@ -554,6 +555,18 @@ const char page_html[] PROGMEM = R"rawliteral(
         .catch(error => console.error('Error:', error));
     }
 
+    function dropweight() {
+      sendMessage('Dropweight');
+      fetch('/dropweight', { method: 'GET' })
+        .then(response => {
+          if (!response.ok) {
+            throw new Error('Network response was not ok');
+          }
+          console.log('Dropweight released');
+        })
+        .catch(error => console.error('Error:', error));
+    
+    }
 
     function enterDive() {
       sendMessage('Dive');

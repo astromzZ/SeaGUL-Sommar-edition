@@ -25,9 +25,10 @@
 #define SOFT_POT_PIN             4 //Pin connected to softpot wiper
 #define PUMP_PIN                 5 //Pin connected to pump
 #define VALVE_PIN                6 //Pin connected to valve 
-#define DROPWEIGHT_PIN           2 //Pin connected to dropweight
-#define BAT_VOLTAGE_PIN         10 //Pin connected to bat voltage
-#define BAT_VOLTAGE_MONITOR_PIN 11 //Pin connected to bat voltage monitor
+#define DROPWEIGHT_PIN           2 //Pin connected to dropweight, so that the ESP can release the dropweight
+#define LEAK_SENSOR_PIN         12 //Pin connected to leak sensor to indicate if the glider is leaking and the dropweight should be released/has been released
+#define BAT_VOLTAGE_READ_PIN         10 //Pin connected to bat voltage
+#define BAT_READ_ENABLE_PIN 11 //Pin connected to bat voltage monitor
 #define RX_PIN                  36 // RX pin configuration
 #define TX_PIN                  35 // TX pin configuration
 #define POKE_PIN                48 // Pin to check if the device has been poked by the AGT
@@ -122,6 +123,7 @@ enum GliderState {
 };
 GliderState gliderState = Glider_init; // Initial state of the glider
 bool startSetup = false; // Flag to indicate if the setup should run, activated by the SeaGUL webpage
+bool setupComplete = false; // Flag to indicate if the setup is complete
 
 // Pressure sensor
 #include <KellerLD.h>
@@ -209,6 +211,11 @@ void handleUpdate() {
 void handleSetup() {
   startSetup = true;
   server.send(200, "text/plain", "Setup started");
+}
+
+void handleDropweight () {
+    gliderState = DropWeight;
+    server.send(200, "text/plain", "Dropweight released");
 }
 
 // Handle when idle button is pressed
@@ -313,6 +320,7 @@ void handleTogglePump() {
     String state = server.arg("state");
     if (state == "on") {
       pumpState = true;
+      ventState = false;
     } else if (state == "off") {
       pumpState = false;
     }
@@ -327,6 +335,7 @@ void handleToggleVent() {
     String state = server.arg("state");
     if (state == "open") {
       ventState = true;
+      pumpState = false;
     } else if (state == "closed") {
       ventState = false;
     }
@@ -399,14 +408,19 @@ void handleData() {
 }
 
 void getVBat() {
-  digitalWrite(BAT_VOLTAGE_MONITOR_PIN, HIGH); // Enable the voltage monitor
+  digitalWrite(BAT_READ_ENABLE_PIN, HIGH); // Enable the voltage monitor
 
   delay(500); // Wait for the voltage to stabilize
   // Read the battery voltage
-  Vbat = ((float)analogRead(BAT_VOLTAGE_PIN)) * 12 * 3.3 / 4095; // Convert the analog reading to voltage 10/120
+  Vbat = ((float)analogRead(BAT_VOLTAGE_READ_PIN)) * 12 * 3.3 / 4095; // Convert the analog reading to voltage 10/120
   displaybattery = Vbat;
 
-  digitalWrite(BAT_VOLTAGE_MONITOR_PIN, LOW); // Disable the voltage monitor
+  digitalWrite(BAT_READ_ENABLE_PIN, LOW); // Disable the voltage monitor
+}
+
+void leakSensorISR() {
+    // If the leak sensor is triggered, release the dropweight
+    gliderState = DropWeight;
 }
 
 void setup() {
@@ -429,32 +443,38 @@ void setup() {
     pinMode(POKE_PIN, INPUT);
     pinMode(ACTIVATION_PIN, OUTPUT);
     digitalWrite(ACTIVATION_PIN, LOW);
-    pinMode(BAT_VOLTAGE_PIN, INPUT);
-    pinMode(BAT_VOLTAGE_MONITOR_PIN, OUTPUT);
-    digitalWrite(BAT_VOLTAGE_MONITOR_PIN, LOW);
+    pinMode(BAT_VOLTAGE_READ_PIN, INPUT);
+    pinMode(BAT_READ_ENABLE_PIN, OUTPUT);
+    digitalWrite(BAT_READ_ENABLE_PIN, LOW);
+    pinMode(TRAN_SLEEP_PIN, OUTPUT);
+    digitalWrite(TRAN_SLEEP_PIN, LOW);
+    pinMode(ROT_SLEEP_PIN, OUTPUT);
+    digitalWrite(ROT_SLEEP_PIN, LOW);
+
+    attachInterrupt(LEAK_SENSOR_PIN, leakSensorISR, RISING);
 
     Wire.begin(SDA_PIN, SCL_PIN);
     Wire.setClock(400000);
 
-    while (!Serial) // Wait for the user to open the serial monitor
-      ;
-    delay(100);
-    Serial.println();
-    Serial.println();
-    Serial.println(F("REVERE Glider SeaGUL"));
-    Serial.println(F("Monterat test"));
-    Serial.println();
+    // while (!Serial) // Wait for the user to open the serial monitor
+    //   ;
+    // delay(100);
+    // Serial.println();
+    // Serial.println();
+    // Serial.println(F("REVERE Glider SeaGUL"));
+    // Serial.println(F("Monterat test"));
+    // Serial.println();
 
-    //empty the serial buffer
-    while(Serial.available() > 0)
-      Serial.read();
+    // //empty the serial buffer
+    // while(Serial.available() > 0)
+    //   Serial.read();
 
-    //wait for the user to press any key before beginning
-    Serial.println(F("Please check that the Serial Monitor is set to 115200 Baud"));
-    Serial.println(F("Then click Send to start the test."));
-    Serial.println();
-    while(Serial.available() == 0)
-      ;
+    // //wait for the user to press any key before beginning
+    // Serial.println(F("Please check that the Serial Monitor is set to 115200 Baud"));
+    // Serial.println(F("Then click Send to start the test."));
+    // Serial.println();
+    // while(Serial.available() == 0)
+    //   ;
 
     sensorDataQueue = xQueueCreate(10, sizeof(SensorData));
     if (sensorDataQueue == NULL) {
@@ -487,6 +507,12 @@ void setup() {
     WiFi.softAP(ssid, password);
     WiFi.softAPConfig(local_IP, gateway, subnet);
 
+    // esp_wifi_set_max_tx_power(84); 
+
+    int8_t txpower;
+    esp_wifi_get_max_tx_power(&txpower);
+    Serial.println("TX Power: " + String(txpower));
+
     server.on("/", handleRoot);
     server.on("/update", handleUpdate);
     server.on("/data", handleData);
@@ -505,6 +531,8 @@ void setup() {
     server.on("/toggleVent", handleToggleVent);
     server.on("/errorMessage", handleErrorMessage);
     server.on("/checkBattery", handleCheckBattery);
+    server.on("/setup", handleSetup);
+    server.on("/dropweight", handleDropweight);
     
     server.begin();
     Serial.println("HTTP server started");
@@ -518,7 +546,6 @@ void loop() {
 void openLogSetup() {
   myLog.begin();
 
-//   Serial.begin(115200); //9600bps is used for debug statements
   Serial.println("OpenLog Status Test");
 
   byte status = myLog.getStatus();
@@ -631,30 +658,36 @@ void moveTranslationMotor (SensorData receivedData, float &currentPosition, floa
 void controlRotationMotor (float &rotation_direction, bool rotationmotorRunning) {
     rotationMotor.setSpeed(100 * rotation_direction);
 
-    if (rotationMotor.currentPosition() >= -250 && rotationMotor.currentPosition() <= 250) {
+    if (rotationMotor.currentPosition() >= -250*16 && rotationMotor.currentPosition() <= 250*16) {
         rotationMotor.runSpeed();
-    } else if (rotationMotor.currentPosition() <= -250 && rotation_direction == 1) {
+        displayRotationSteps = rotationMotor.currentPosition();
+    } else if (rotationMotor.currentPosition() <= -250*16 && rotation_direction == 1) {
         rotationMotor.runSpeed();
-    } else if (rotationMotor.currentPosition() >= 250 && rotation_direction == -1) {
+        displayRotationSteps = rotationMotor.currentPosition();
+    } else if (rotationMotor.currentPosition() >= 250*16 && rotation_direction == -1) {
         rotationMotor.runSpeed();
+        displayRotationSteps = rotationMotor.currentPosition();
     }
 
-    displayRotationSteps = rotationMotor.currentPosition();
+    // displayRotationSteps = rotationMotor.currentPosition();
 
 }
 
 void controlTranslationMotor (float &translation_direction, bool translationmotorRunning) {
-    translationMotor.setSpeed(400 * translation_direction);
+    translationMotor.setSpeed(800 * translation_direction);
 
-    if (translationMotor.currentPosition() >= 0 && translationMotor.currentPosition() <= 1000) {
+    if (translationMotor.currentPosition() >= 0 && translationMotor.currentPosition() <= 98000) {
         translationMotor.runSpeed();
+        displayTranslationSteps = translationMotor.currentPosition();
     } else if (translationMotor.currentPosition() <= 0 && translation_direction == 1) {
         translationMotor.runSpeed();
-    } else if (translationMotor.currentPosition() >= 1000 && translation_direction == -1) {
+        displayTranslationSteps = translationMotor.currentPosition();
+    } else if (translationMotor.currentPosition() >= 98000 && translation_direction == -1) {
         translationMotor.runSpeed();
+        displayTranslationSteps = translationMotor.currentPosition();
     }
 
-    displayTranslationSteps = translationMotor.currentPosition();
+    // displayTranslationSteps = translationMotor.currentPosition();
 }
 
 void receive_response(Ezo_board &ECsensor)  // Function to decode the response after a command was issued
@@ -711,18 +744,20 @@ void glidercontrol(void* pvParameters) {
   unsigned volatile long previousPrintTime = 0; // Variable to store the previous time the state was printed
   unsigned volatile long previousBatteryCheck = 0; // Variable to store the previous time the battery level was checked
   const unsigned long BAT_CHECK_INTERVAL = 60000 * 5; // Interval to check the battery level (in milliseconds) (5 minutes)
-  const unsigned long ONE_HOUR = 3600000; // 1 hour in milliseconds, used to check if the glider has been going down/up for too long
+  const unsigned long ONE_HOUR = 3600000 * 100; // 1 hour in milliseconds, used to check if the glider has been going down/up for too long
   const unsigned long sampleInterval = 10000; //Interval to sample the depth (in milliseconds)
   const unsigned long statePrintInterval = 5000; //Interval to check if the glider is moving upwards instead of downwards (in milliseconds)
   unsigned int warningCount = 0; // Variable to keep track of the number of warnings
   bool warningFlag = false; // Flag to indicate if a warning has been issued
   bool previousTimeSet = false; // Flag to indicate if the previous time has been set when Down/Up states shift
 
+  bool initialized = false;
+  bool success = true;
+
   SensorData receivedData;
 
   while (true) {
     unsigned long currentMillis = millis(); //Holds the current time the program has been running in milliseconds
-
 
     //ToDo:
     // 1.
@@ -738,7 +773,6 @@ void glidercontrol(void* pvParameters) {
     // 4. 
     // 
     
-
     switch (gliderState) { 
 
       case Glider_init:
@@ -754,7 +788,6 @@ void glidercontrol(void* pvParameters) {
 
             errorMessage = "Gliderstate: Init, starting setup";
 
-            bool initialized = false;
             while (!initialized) {
                 myICM.begin(Wire, AD0_VAL);
                 Serial.print(F("Initialization of the sensor returned: "));
@@ -769,7 +802,6 @@ void glidercontrol(void* pvParameters) {
             }
             Serial.println("Device connected!");
 
-            bool success = true;
             success &= (myICM.initializeDMP() == ICM_20948_Stat_Ok);
             success &= (myICM.enableDMPSensor(INV_ICM20948_SENSOR_GAME_ROTATION_VECTOR) == ICM_20948_Stat_Ok);
             // success &= (myICM.setDMPODRrate(DMP_ODR_Reg_Quat6, 0) == ICM_20948_Stat_Ok);
@@ -813,13 +845,26 @@ void glidercontrol(void* pvParameters) {
 
             openLogSetup();
 
+            translationMotor.setMaxSpeed(1000);
+            translationMotor.enableOutputs();
+            // Set the maximum speed in steps per second:
+            translationMotor.setPinsInverted(true, false, false);
+
+            rotationMotor.setMaxSpeed(100);
+            rotationMotor.enableOutputs();
+            // Set the maximum speed in steps per second:
+            rotationMotor.setPinsInverted(true, false, false);
+
             errorMessage = "Glider initialized. Entering Idle state";
 
+            setupComplete = true;
             gliderState = Idle;
           
           break;
 
       case Idle: //This case is for when the glider is not doing anything. Activated via button on SeaGUL webpage.
+
+          errorMessage = "Idle state";
 
           if (currentMillis - previousPrintTime >= statePrintInterval) {
             Serial.println("Gliderstate: Idle");
@@ -896,28 +941,30 @@ void glidercontrol(void* pvParameters) {
             }
 
           // It is also possible to control the pump and vent of the glider manually through the SeaGUL webpage.
-          if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
-            if (receivedData.potentiometer < 3000) {
-              if (ventState) {
+
+          if (ventState) {
+            if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
+              if (receivedData.potentiometer < 3000) {
                 digitalWrite(VALVE_PIN, HIGH);
               } else {
-                digitalWrite(VALVE_PIN, LOW);
+                errorMessage = "The reservoir is full.";
               }
-            } else {
-              errorMessage = "The reservoir is full.";
             }
-
-            if (receivedData.potentiometer > 200) {
-              if (pumpState) {
-                digitalWrite(PUMP_PIN, HIGH);
-              } else {
-                digitalWrite(PUMP_PIN, LOW);
-              }
-            } else {
-              errorMessage = "The reservoir is empty.";
-            }
+          } else {
+            digitalWrite(VALVE_PIN, LOW);
           }
 
+          if (pumpState) {
+            if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
+              if (receivedData.potentiometer > 200) {
+                digitalWrite(PUMP_PIN, HIGH);
+              } else {
+                errorMessage = "The reservoir is empty. Turning off pump.";
+              }
+            }
+          } else {
+            digitalWrite(PUMP_PIN, LOW);
+          }
 
           if (Serial.available() > 0) {
             char incomingChar = Serial.read();
@@ -980,6 +1027,8 @@ void glidercontrol(void* pvParameters) {
             previousPrintTime = currentMillis;
           }
 
+          errorMessage = "Gliding down state";
+
           //Reset flag, warning count and timer
           glideUpReservoirEmpty = false;
           warningCount = 0;
@@ -995,7 +1044,7 @@ void glidercontrol(void* pvParameters) {
               digitalWrite(VALVE_PIN, HIGH);
 
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
-                  if (receivedData.potentiometer >= 3500) { //When the reservoir is full we close the valve. Value is not determined yet.
+                  if (receivedData.potentiometer >= 3000) { //When the reservoir is full we close the valve. Value is not determined yet.
                       Serial.println("Reservoir full, closing valve.");
                       digitalWrite(VALVE_PIN, LOW);
                       glideDownReservoirFull = true; 
@@ -1018,9 +1067,9 @@ void glidercontrol(void* pvParameters) {
                 moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
               }
 
-              if (Serial.available() > 0) {
-                char incomingChar = Serial.read();
-                if (incomingChar == 's') {
+              if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
+                
+                if (receivedData.depth >= 1) {
                   Serial.println("Depth reached, moving to GlidingUp state.");
 
                   //Reset boolean from the dive down.
@@ -1031,10 +1080,10 @@ void glidercontrol(void* pvParameters) {
                   previousTimeSet = false;
                 }
 
-                if (incomingChar == 'q') {
-                  Serial.println("Dropweight command received, moving to DropWeight state.");
-                  gliderState = DropWeight;
-                }
+                // if (incomingChar == 'q') {
+                //   Serial.println("Dropweight command received, moving to DropWeight state.");
+                //   gliderState = DropWeight;
+                // }
 
               }
 
@@ -1085,6 +1134,8 @@ void glidercontrol(void* pvParameters) {
             previousPrintTime = currentMillis;
           }
 
+          errorMessage = "Gliding up state";
+
           warningCount = 0;
           previousTime = 0;
 
@@ -1119,9 +1170,9 @@ void glidercontrol(void* pvParameters) {
                 moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
               }
 
-              if (Serial.available() > 0) {
-                char incomingChar = Serial.read();
-                if (incomingChar == 'd') {
+              if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
+                
+                if (receivedData.depth <= 0.2) {
                   Serial.println("Surface reached, moving to surface or dive state. Dive number: " + String(n_dyk));
 
                   //Since a dive is complete we add 1 to the number of dives.
@@ -1148,10 +1199,10 @@ void glidercontrol(void* pvParameters) {
 
                 }
 
-                if (incomingChar == 'q') {
-                  Serial.println("Dropweight command received, moving to DropWeight state.");
-                  gliderState = DropWeight;
-                }
+                // if (incomingChar == 'q') {
+                //   Serial.println("Dropweight command received, moving to DropWeight state.");
+                //   gliderState = DropWeight;
+                // }
 
               }
 
@@ -1194,6 +1245,8 @@ void glidercontrol(void* pvParameters) {
             Serial.println("Gliderstate: Surface");
             previousPrintTime = currentMillis;
           }
+
+          errorMessage = "Surface state";
 
           pitchSP = -20; // Setpoint for pitch, we want the antenna to be above the water.
           rollSP = 0; // Setpoint for roll
@@ -1271,6 +1324,8 @@ void glidercontrol(void* pvParameters) {
 
           Serial.println("Releasing weight...");
 
+          errorMessage = "Releasing weight...";
+
           //Check if the pump or valve pins are high. If they are, set them to low.
           if (pumpPinState == HIGH) {
             digitalWrite(PUMP_PIN, LOW);
@@ -1287,6 +1342,8 @@ void glidercontrol(void* pvParameters) {
 
           digitalWrite(DROPWEIGHT_PIN, LOW);
 
+          errorMessage = "Weight released. Moving to Surface state.";
+
           //After the release of the dropweight, enter Surface state.
           gliderState = Surface;
           break;
@@ -1299,6 +1356,11 @@ void datagathering(void* pvParameters) {
   while (true) {
       SensorData data;
       icm_20948_DMP_data_t IMUdata;
+
+      while (!setupComplete) { // Wait for the setup to be completed
+          delay(100);
+      }
+
       myICM.readDMPdataFromFIFO(&IMUdata);
       if ((myICM.status == ICM_20948_Stat_Ok) || (myICM.status == ICM_20948_Stat_FIFOMoreDataAvail)) {
 
@@ -1353,7 +1415,7 @@ void datagathering(void* pvParameters) {
       Psensor.read();
       data.depth = Psensor.depth();
       data.pressure = Psensor.pressure();
-      displaypressure = data.pressure;
+      displaypressure = data.depth;
 
       delay(35);
       // Read temperature
@@ -1393,7 +1455,7 @@ void datagathering(void* pvParameters) {
                         "Temperature: " + String(data.temperature) + " Celsius";
                       //  "Batterycurrent: " + String(current) + " A";
       // writeSD(logData);
-      Serial.println(logData);
+    //   Serial.println(logData);
 
       // delay(100); // Adding a delay to reduce bus congestion and improve stability
     }
