@@ -88,6 +88,9 @@ float displayTranslationSteps = 0;
 float nextPosition = 0;
 float nextDegree = 0;
 
+//Used to set target pump possition 
+int targetPotentiometerValue = 0;
+
 unsigned long stateStartMillis = 0; // Variable to store the start time of the states GlidingDown and GlidingUp
 
 float Vbat = 30.0; // Variable to store the battery voltage
@@ -344,6 +347,12 @@ void handleToggleVent() {
     server.send(400, "text/plain", "Bad Request");
   }
 }
+void setTargetPotentiometerValue() {
+  int potValue = analogRead(SOFT_POT_PIN); // Read potentiometer value
+  targetPotentiometerValue = potValue; // Set target variable
+  Serial.print("Target Potentiometer Value set to: ");
+  Serial.println(targetPotentiometerValue);
+}
 
 void handleErrorMessage() {
     server.send(200, "text/plain", errorMessage); // Serve the captured error message
@@ -402,7 +411,8 @@ void handleData() {
   json += "\"internalHumidity\":" + String(randomFloat(10.0, 30.0)) + ",";
   json += "\"rotationAngle\":" + String(displayRotationSteps) + ",";
   json += "\"translationPosition\":" + String(displayTranslationSteps) + ",";
-  json += "\"adcValue\":" + String(displaypotentiometer);
+  json += "\"adcValue\":" + String(displaypotentiometer)+",";
+  json += "\"setPotValue\":" + String(targetPotentiometerValue);
   json += "}";
   server.send(200, "application/json", json);
 }
