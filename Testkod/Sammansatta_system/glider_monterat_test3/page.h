@@ -279,6 +279,8 @@ const char page_html[] PROGMEM = R"rawliteral(
           <td id="translationPosition"></td>
         </tr>
       </table>
+      <button onclick="setTargetStepValue()">Set Target Step Value</button>
+      <span id="stepValueDisplay">Value: 0</span>
     </div>
 
     <div class="status-card">
@@ -310,8 +312,19 @@ const char page_html[] PROGMEM = R"rawliteral(
         <input type="number" id="adcInput" name="adcInput" min="0" max="100" required>
         <button type="submit">Set value</button>
       </form>
+
       <button onclick="setTargetPotentiometerValue()">Set Target Potentiometer Value</button>
       <span id="potentiometerValueDisplay">Value: 0</span>
+      
+      <form id="depthForm" onsubmit="sendDepthValue(event);">
+        <label for="depthInput">Enter desired depth (m):</label>
+        <input type="number" id="depthInput" name="depthInput" min="0" max="100" required>
+        <button type="submit">Set value</button>
+      </form>
+
+      <span>New Desired Depth: </span>
+      <span id="desiredDepthDisplay">0</span> m
+      </div>
     </div>
 
     <div class="status-card">
@@ -726,6 +739,50 @@ const char page_html[] PROGMEM = R"rawliteral(
         })
         .catch(error => {
           console.error('Error:', error);
+        });
+    }
+
+    function setTargetStepValue() {
+      sendMessage('Set Target Step Value');
+      fetch('/setTargetStepValue' , { method: 'GET' })
+        .then(response => {
+          if (!response.ok) {
+            throw new Error('Network response was not ok');
+          }
+          sendMessage('Potentiometer value set');
+        })
+      fetch('/data')
+        .then(response => response.json())
+        .then(data => {
+          const setStepValue = data.setStepValue;
+          sendMessage('Value, ' + setStepValue);
+          document.getElementById('stepValueDisplay').textContent ='Target value' + setStepValue;
+          console.log('setStepValue:', setStepValue);
+        })
+        .catch(error => {
+          console.error('Error:', error);
+        });
+    }
+
+    function sendDepthValue() {
+      event.preventDefault(); // Prevent the default form submission behavior
+
+      const depthInput = document.getElementById('depthInput').value; // Get the value from the input field
+      const depthValue = Math.min(Math.max(depthInput, 0), 100); // Ensure the value is between 0 and 100
+
+      fetch(`/setDesiredDepth?value=${depthValue}`, { method: 'GET' })
+          .then(response => {
+              if (!response.ok) {
+                  throw new Error('Network response was not ok');
+              }
+              console.log('Desired depth set to:', depthValue);
+          })
+          .then(text => {
+              console.log('Server response:', text);
+              document.getElementById('desiredDepthDisplay').innerText = depthValue;
+          })
+          .catch(error => {
+              console.error('Error setting desired depth:', error);
         });
     }
     setInterval(fetchData, 1000); // Fetch data every second
