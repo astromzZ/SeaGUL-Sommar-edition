@@ -707,16 +707,20 @@ const char page_html[] PROGMEM = R"rawliteral(
     }
     
     function setTargetPotentiometerValue() {
-      fetch('/setTargetPotentiometerValue')
-        .then(response => response.text())
-        .then(data => {
-          console.log(data);
-          return fetch('/data'); // Chain the fetch call to get the updated data
+      sendMessage('Set Target Potentiometer Value');
+      fetch('/setTargetPotentiometerValue' , { method: 'GET' })
+        .then(response => {
+          if (!response.ok) {
+            throw new Error('Network response was not ok');
+          }
+          sendMessage('Potentiometer value set');
         })
+      fetch('/data')
         .then(response => response.json())
         .then(data => {
           const setPotValue = data.setPotValue;
-          const percentage = ((setPotValue / 4095) * 100).toFixed(1);
+          sendMessage('Value, ' + setPotValue);
+          const percentage = ((setPotValue / 4095) * 100).toFixed(2);
           document.getElementById('potentiometerValueDisplay').textContent = 'Target percentage: ' + percentage;
           console.log('setPotValue:', setPotValue);
         })
@@ -724,27 +728,6 @@ const char page_html[] PROGMEM = R"rawliteral(
           console.error('Error:', error);
         });
     }
-
-    function setTargetPotentiometerValue() {
-      fetch('/setTargetPotentiometerValue')
-        .then(response => response.text())
-        .then(data => {
-          console.log(data);
-          return fetch('/data'); // Chain the fetch call to get the updated data
-        })
-        .then(response => response.json())
-        .then(data => {
-          const setPotValue = data.setPotValue;
-          const percentage = ((setPotValue / 4095) * 100).toFixed(1);
-          document.getElementById('potentiometerValueDisplay').textContent = 'Target percentage: ' + percentage;
-          console.log('setPotValue:', setPotValue);
-        })
-        .catch(error => {
-          console.error('Error:', error);
-        });
-    }
-
-
     setInterval(fetchData, 1000); // Fetch data every second
   </script>
 </body>

@@ -89,7 +89,7 @@ float nextPosition = 0;
 float nextDegree = 0;
 
 //Used to set target pump possition 
-int targetPotentiometerValue = 0;
+float targetPotentiometerValue = 0;
 
 unsigned long stateStartMillis = 0; // Variable to store the start time of the states GlidingDown and GlidingUp
 
@@ -104,6 +104,7 @@ struct SensorData {
     float depth;
     float pressure;
     float potentiometer;
+    float potentiometerSet;
     float temperature;
 };
 QueueHandle_t sensorDataQueue; // Queue to hold sensor data
@@ -347,9 +348,9 @@ void handleToggleVent() {
     server.send(400, "text/plain", "Bad Request");
   }
 }
-void setTargetPotentiometerValue() {
-  int potValue = analogRead(SOFT_POT_PIN); // Read potentiometer value
-  targetPotentiometerValue = potValue; // Set target variable
+void handleSetTargetPotentiometerValue() {
+  targetPotentiometerValue = displaypotentiometer; // Set target variable
+  //server.send(200, "text/plain", "Target Potentiometer Value set to: " + String(targetPotentiometerValue));
   Serial.print("Target Potentiometer Value set to: ");
   Serial.println(targetPotentiometerValue);
 }
@@ -543,6 +544,7 @@ void setup() {
     server.on("/checkBattery", handleCheckBattery);
     server.on("/setup", handleSetup);
     server.on("/dropweight", handleDropweight);
+    server.on("/setTargetPotentiometerValue", handleSetTargetPotentiometerValue);
     
     server.begin();
     Serial.println("HTTP server started");
