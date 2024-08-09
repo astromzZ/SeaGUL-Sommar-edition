@@ -83,13 +83,16 @@ float displayconductivity = 0;
 float displaybattery = 0;
 float displayRotationSteps = 0;
 float displayTranslationSteps = 0;
-
+//Used to set target pump possition 
+float targetPotentiometerValue = 0;
+float targetStepValue = 0;
 //Used to keep track on where the weight is positioned
 float nextPosition = 0;
 float nextDegree = 0;
 
-//Used to set target pump possition 
-float targetPotentiometerValue = 0;
+float minReservoir = 1700;
+float maxRerservoir = 2600;
+float desiredDepth = 0;
 
 unsigned long stateStartMillis = 0; // Variable to store the start time of the states GlidingDown and GlidingUp
 
@@ -164,7 +167,7 @@ HardwareSerial mySerial(1); // Initialize UART1
 
 void openLogSetup();
 void moveRotationMotor(SensorData receivedData, float &currentDegree, float &rollSP, bool &rotationmotorRunning);
-void moveTranslationMotor(SensorData receivedData, float &currentPosition, float &pitchSP, bool translationmotorRunning);
+void moveTranslationMotor (bool translationmotorRunning, float &pitchSP, float targetstepvalue);
 void glidercontrol(void* pvParameters);
 void datagathering(void* pvParameters);
 void writeSD(String measurement) {
@@ -350,9 +353,24 @@ void handleToggleVent() {
 }
 void handleSetTargetPotentiometerValue() {
   targetPotentiometerValue = displaypotentiometer; // Set target variable
-  //server.send(200, "text/plain", "Target Potentiometer Value set to: " + String(targetPotentiometerValue));
   Serial.print("Target Potentiometer Value set to: ");
   Serial.println(targetPotentiometerValue);
+}
+void handleSetDesiredDepth() {
+  if (server.hasArg("value")) {
+    String depthValue = server.arg("value");
+    desiredDepth = depthValue.toInt();  // Convert the depth value to an integer
+    Serial.print("Desired Depth set to: ");
+    Serial.println(desiredDepth);
+    server.send(200, "text/plain", "Desired depth updated");
+  } else {
+    server.send(400, "text/plain", "Invalid request");
+  }
+}
+void handleSetTargetStepValue() {
+  targetStepValue = displayTranslationSteps; // Set target variable
+  Serial.print("Target Step Value set to: ");
+  Serial.println(targetStepValue);
 }
 
 void handleErrorMessage() {
@@ -413,7 +431,8 @@ void handleData() {
   json += "\"rotationAngle\":" + String(displayRotationSteps) + ",";
   json += "\"translationPosition\":" + String(displayTranslationSteps) + ",";
   json += "\"adcValue\":" + String(displaypotentiometer)+",";
-  json += "\"setPotValue\":" + String(targetPotentiometerValue);
+  json += "\"setPotValue\":" + String(targetPotentiometerValue) + ",";
+  json += "\"setStepValue\":" + String(targetStepValue);
   json += "}";
   server.send(200, "application/json", json);
 }
@@ -545,7 +564,8 @@ void setup() {
     server.on("/setup", handleSetup);
     server.on("/dropweight", handleDropweight);
     server.on("/setTargetPotentiometerValue", handleSetTargetPotentiometerValue);
-    
+    server.on("/setTargetStepValue", handleSetTargetStepValue);
+    server.on("/setDesiredDepth", handleSetDesiredDepth);
     server.begin();
     Serial.println("HTTP server started");
 
@@ -597,74 +617,43 @@ void openLogSetup() {
 }
 
 void moveRotationMotor (SensorData receivedData, float &currentDegree, float &rollSP, bool &rotationmotorRunning) {
-    // float roll_error = rollSP - (receivedData.roll * 180 / PI);
-    // int rot_direction = (roll_error < 0) ? 1 : -1;
-    // nextDegree = currentDegree + rot_direction * (ROTATIONMOTOR_STEP_SIZE / (float)STEPS_PER_DEGREE);
 
-    // if (fabs(roll_error) > 5) {
-    //     if (!rotationmotorRunning) {
-    //         digitalWrite(ROT_SLEEP_PIN, HIGH);
-    //         rotationmotorRunning = true;
-    //     }
 
-    //     if (nextDegree < ROTATION_MAX_DEGREE && nextDegree > ROTATION_MIN_DEGREE) {
-    //         rotstepper.setMicrostep(1);
-    //         rotstepper.move(rot_direction > 0 ? ROTATIONMOTOR_STEP_SIZE : -ROTATIONMOTOR_STEP_SIZE);
-    //         currentDegree = nextDegree;
-    //     } else {
-    //         if (!rotationmotorRunning) {
-    //             digitalWrite(ROT_SLEEP_PIN, HIGH);
-    //             rotationmotorRunning = true;
-    //         }
-
-    //         if ((rot_direction > 0 && currentDegree >= ROTATION_MAX_DEGREE) || (rot_direction < 0 && currentDegree <= ROTATION_MIN_DEGREE)) {
-    //             rotstepper.setMicrostep(1);
-    //             rotstepper.move(rot_direction > 0 ? ROTATIONMOTOR_STEP_SIZE : -ROTATIONMOTOR_STEP_SIZE);
-    //             currentDegree = nextDegree;
-    //         }
-    //     }
-    // } else {
-    //     if (rotationmotorRunning) {
-    //         digitalWrite(ROT_SLEEP_PIN, LOW);
-    //         rotationmotorRunning = false;
-    //     }
-    // }
 }
 
-void moveTranslationMotor (SensorData receivedData, float &currentPosition, float &pitchSP, bool translationmotorRunning) {
-    //Translation motor
-//     float pitch_error = pitchSP - (receivedData.pitch * 180 / PI);
-//     int transl_direction = (pitch_error < 0) ? 1 : -1;
-//     nextPosition = currentPosition + transl_direction * (TRANSLATIONMOTOR_STEP_SIZE / (float)STEPS_PER_CM);
+void moveTranslationMotor (bool translationmotorRunning, float &pitchSP, float targetstepvalue) {
+    int transl_direction = (pitchSP < 0) ? 1 : -1;
+    translationMotor.setSpeed(800*transl_direction);
+    //float pitch_error = pitchSP - (receivedData.pitch*180/PI);
+    int pitchPosition = targetStepValue + transl_direction*5000;
 
-//    if (fabs(pitch_error) > 5) {
-//         if (!translationmotorRunning) {
-//             digitalWrite(TRAN_SLEEP_PIN, HIGH);
-//             translationmotorRunning = true;
-//         }
+    if (translationMotor.currentPosition() >= pitchPosition && transl_direction == 1) {
+        translationMotor.stop();
+        translationmotorRunning = false;
+        digitalWrite(TRAN_SLEEP_PIN, LOW);
+    } else {
+        translationMotor.runSpeed();
+        displayTranslationSteps = translationMotor.currentPosition();
+    }
+    if (translationMotor.currentPosition() <= pitchPosition && transl_direction == -1) {
+        translationMotor.stop();
+        translationmotorRunning = false;
+        digitalWrite(TRAN_SLEEP_PIN, LOW);
+    } else {
+        translationMotor.runSpeed();
+        displayTranslationSteps = translationMotor.currentPosition();
+    }
+    if (translationMotor.currentPosition() >= 0 && translationMotor.currentPosition() <= 92000) {
+        translationMotor.runSpeed();
+        displayTranslationSteps = translationMotor.currentPosition();
+    } else if (translationMotor.currentPosition() <= 0 && transl_direction == 1) {
+        translationMotor.runSpeed();
+        displayTranslationSteps = translationMotor.currentPosition();
+    } else if (translationMotor.currentPosition() >= 92000 && transl_direction == -1) {
+        translationMotor.runSpeed();
+        displayTranslationSteps = translationMotor.currentPosition();
+    }
 
-//         if (nextPosition < TRANSLATION_MAX_POSITION_CM && nextPosition > TRANSLATION_MIN_POSITION_CM) {
-//             transtepper.setMicrostep(1);
-//             transtepper.move(transl_direction > 0 ? TRANSLATIONMOTOR_STEP_SIZE : -TRANSLATIONMOTOR_STEP_SIZE);
-//             currentPosition = nextPosition;
-//         } else {
-//             if (!translationmotorRunning) {
-//                 digitalWrite(TRAN_SLEEP_PIN, HIGH);
-//                 translationmotorRunning = true;
-//             }
-
-//             if ((transl_direction > 0 && currentPosition >= TRANSLATION_MAX_POSITION_CM) || (transl_direction < 0 && currentPosition <= TRANSLATION_MIN_POSITION_CM)) {
-//                 transtepper.setMicrostep(1);
-//                 transtepper.move(transl_direction > 0 ? TRANSLATIONMOTOR_STEP_SIZE : -TRANSLATIONMOTOR_STEP_SIZE);
-//                 currentPosition = nextPosition;
-//             }
-//         }
-//     } else {
-//         if (translationmotorRunning) {
-//             digitalWrite(TRAN_SLEEP_PIN, LOW);
-//             translationmotorRunning = false;
-//         }
-//     }
 }
 
 void controlRotationMotor (float &rotation_direction, bool rotationmotorRunning) {
@@ -688,7 +677,7 @@ void controlRotationMotor (float &rotation_direction, bool rotationmotorRunning)
 void controlTranslationMotor (float &translation_direction, bool translationmotorRunning) {
     translationMotor.setSpeed(800 * translation_direction);
 
-    if (translationMotor.currentPosition() >= 0 && translationMotor.currentPosition() <= 98000) {
+    if (translationMotor.currentPosition() >= 0 && translationMotor.currentPosition() <= 92000) {
         translationMotor.runSpeed();
         displayTranslationSteps = translationMotor.currentPosition();
     } else if (translationMotor.currentPosition() <= 0 && translation_direction == 1) {
@@ -956,7 +945,7 @@ void glidercontrol(void* pvParameters) {
 
           if (ventState) {
             if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
-              if (receivedData.potentiometer < 3000) {
+              if (receivedData.potentiometer < maxRerservoir) {
                 digitalWrite(VALVE_PIN, HIGH);
               } else {
                 errorMessage = "The reservoir is full.";
@@ -968,7 +957,7 @@ void glidercontrol(void* pvParameters) {
 
           if (pumpState) {
             if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
-              if (receivedData.potentiometer > 200) {
+              if (receivedData.potentiometer > minReservoir) {
                 digitalWrite(PUMP_PIN, HIGH);
               } else {
                 errorMessage = "The reservoir is empty. Turning off pump.";
@@ -1056,8 +1045,8 @@ void glidercontrol(void* pvParameters) {
               digitalWrite(VALVE_PIN, HIGH);
 
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
-                  if (receivedData.potentiometer >= 3000) { //When the reservoir is full we close the valve. Value is not determined yet.
-                      Serial.println("Reservoir full, closing valve.");
+                  if (receivedData.potentiometer >= targetPotentiometerValue+300 || receivedData.potentiometer>= maxRerservoir ) { 
+                      Serial.println("Reservoir at target, closing valve.");
                       digitalWrite(VALVE_PIN, LOW);
                       glideDownReservoirFull = true; 
                   }
@@ -1067,21 +1056,27 @@ void glidercontrol(void* pvParameters) {
           //After the reservoir is full we can regulate the pitch and roll of the glider.
           //We can't do these simultaneously because the electrical system will be overloaded. 
           if (glideDownReservoirFull) {
+            
+              if (!translationmotorRunning) { //Start the motor if it is not already running
+                  digitalWrite(TRAN_SLEEP_PIN, HIGH);
+                  translationmotorRunning = true;
+              }
 
               if (!previousTimeSet) { // Set the previous time to the current time after the reservoir is full.
                   previousTime = currentMillis;
                   previousTimeSet = true;
               }
-
+              //bool translationmotorRunning, float &pitchSP, float targetstepvalue
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
+              
                 //ToDo: If the error is greater than 5 degrees, let the motor adjust the pitch for e.g. 10 seconds. 
-                moveTranslationMotor(receivedData, currentPosition, pitchSP, translationmotorRunning);
+                moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
                 moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
               }
 
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
                 
-                if (receivedData.depth >= 1) {
+                if (receivedData.depth >= desiredDepth) {
                   Serial.println("Depth reached, moving to GlidingUp state.");
 
                   //Reset boolean from the dive down.
@@ -1160,8 +1155,8 @@ void glidercontrol(void* pvParameters) {
               digitalWrite(PUMP_PIN, HIGH);
 
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
-                if (receivedData.potentiometer <= 1000) { //When the reservoir is empty we stop the pump. Value is not determined yet.
-                    Serial.println("Reservoir empty, stopping pump.");
+                if (receivedData.potentiometer <= targetPotentiometerValue-300 || receivedData.potentiometer <= minReservoir) { //When the reservoir is empty we stop the pump. Value is not determined yet.
+                    Serial.println("Reservoir at target, stopping pump.");
                     digitalWrite(PUMP_PIN, LOW);
                     glideUpReservoirEmpty = true;
                 }
@@ -1176,9 +1171,9 @@ void glidercontrol(void* pvParameters) {
                   previousTimeSet = true;
               }
 
-
+              //bool translationmotorRunning, float &pitchSP, float targetstepvalue
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
-                moveTranslationMotor(receivedData, currentPosition, pitchSP, translationmotorRunning);
+                moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
                 moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
               }
 
@@ -1260,7 +1255,8 @@ void glidercontrol(void* pvParameters) {
 
           errorMessage = "Surface state";
 
-          pitchSP = -20; // Setpoint for pitch, we want the antenna to be above the water.
+          //pitchSP = -20; // Setpoint for pitch, we want the antenna to be above the water.
+          
           rollSP = 0; // Setpoint for roll
 
           //Check if the dropweight has been released. If not, buissness as usual.
@@ -1311,7 +1307,7 @@ void glidercontrol(void* pvParameters) {
 
           if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
             moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
-            moveTranslationMotor(receivedData, currentPosition, pitchSP, translationmotorRunning);
+            moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
           }
 
           //When command is given enter the Diving state and reset the number of dives
