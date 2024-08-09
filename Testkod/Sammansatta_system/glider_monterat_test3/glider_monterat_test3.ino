@@ -621,41 +621,72 @@ void moveRotationMotor (SensorData receivedData, float &currentDegree, float &ro
 
 }
 
-void moveTranslationMotor (bool translationmotorRunning, float &pitchSP, float targetstepvalue) {
+void moveTranslationMotor(bool translationmotorRunning, float &pitchSP, float targetstepvalue) {
     int transl_direction = (pitchSP < 0) ? 1 : -1;
-    translationMotor.setSpeed(800*transl_direction);
-    //float pitch_error = pitchSP - (receivedData.pitch*180/PI);
-    int pitchPosition = targetStepValue + transl_direction*5000;
+    int currentPos = translationMotor.currentPosition();
 
-    if (translationMotor.currentPosition() >= pitchPosition && transl_direction == 1) {
-        translationMotor.stop();
-        translationmotorRunning = false;
-        digitalWrite(TRAN_SLEEP_PIN, LOW);
-    } else {
-        translationMotor.runSpeed();
-        displayTranslationSteps = translationMotor.currentPosition();
-    }
-    if (translationMotor.currentPosition() <= pitchPosition && transl_direction == -1) {
-        translationMotor.stop();
-        translationmotorRunning = false;
-        digitalWrite(TRAN_SLEEP_PIN, LOW);
-    } else {
-        translationMotor.runSpeed();
-        displayTranslationSteps = translationMotor.currentPosition();
-    }
-    if (translationMotor.currentPosition() >= 0 && translationMotor.currentPosition() <= 92000) {
-        translationMotor.runSpeed();
-        displayTranslationSteps = translationMotor.currentPosition();
-    } else if (translationMotor.currentPosition() <= 0 && transl_direction == 1) {
-        translationMotor.runSpeed();
-        displayTranslationSteps = translationMotor.currentPosition();
-    } else if (translationMotor.currentPosition() >= 92000 && transl_direction == -1) {
-        translationMotor.runSpeed();
-        displayTranslationSteps = translationMotor.currentPosition();
+    // Calculate the target position with an appropriate offset based on pitchSP
+    int targetPosition = targetstepvalue + transl_direction * 5000;
+
+    // Clamp the target position within the motor's operational range
+    if (targetPosition < 0) {
+        targetPosition = 0;
+    } else if (targetPosition > 92000) {
+        targetPosition = 92000;
     }
 
+    // Calculate the error between the current position and the target position
+    int error = targetPosition - currentPos;
+
+    // If the motor is not already running and the error is significant, start the motor
+    if (!translationmotorRunning && abs(error) > 50) {
+        digitalWrite(TRAN_SLEEP_PIN, HIGH);  // Wake up the motor
+        translationmotorRunning = true;
+    }
+
+    // Set motor speed based on the direction and error magnitude
+    int speed = 800 * ((error > 0) ? 1 : -1);
+    translationMotor.setSpeed(speed);
+
+    // If the error is within a small range (deadband), stop the motor
+    if (abs(error) <= 50) {
+        translationMotor.stop();
+        translationmotorRunning = false;
+        digitalWrite(TRAN_SLEEP_PIN, LOW);  // Put the motor to sleep
+    } else {
+        translationMotor.run();
+    }
+
+    // Update the display value with the current motor position
+    displayTranslationSteps = translationMotor.currentPosition();
 }
+// void moveTranslationMotor (bool translationmotorRunning, float &pitchSP, float targetstepvalue){
+//     int transl_direction = (pitchSP < 0) ? 1 : -1;
+//     int stepAmount = 1000 * transl_direction;
+//     int pitchPosition = targetStepValue + stepAmount;
 
+//     // Ensure the target position stays within the valid range
+//     pitchPosition = constrain(pitchPosition, 0, 92000);
+
+//     // Set a controlled speed (adjust according to your needs)
+//     translationMotor.setMaxSpeed(400);
+//     translationMotor.setAcceleration(200);  // Set acceleration to make movement smooth
+
+//     // Move the motor to the target position
+//     translationMotor.moveTo(pitchPosition);
+//     translationmotorRunning = true;
+
+//     // Run the motor until it reaches the target position
+//     while (translationmotorRunning && translationMotor.distanceToGo() != 0) {
+//         translationMotor.run();
+//     }
+
+//     // Once the motor reaches the target, stop it and put it to sleep
+//     translationMotor.stop();
+//     translationmotorRunning = false;
+//     digitalWrite(TRAN_SLEEP_PIN, LOW);
+
+// }
 void controlRotationMotor (float &rotation_direction, bool rotationmotorRunning) {
     rotationMotor.setSpeed(100 * rotation_direction);
 
@@ -1045,7 +1076,7 @@ void glidercontrol(void* pvParameters) {
               digitalWrite(VALVE_PIN, HIGH);
 
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
-                  if (receivedData.potentiometer >= targetPotentiometerValue+300 || receivedData.potentiometer>= maxRerservoir ) { 
+                  if (receivedData.potentiometer >= targetPotentiometerValue+100 || receivedData.potentiometer>= maxRerservoir ) { 
                       Serial.println("Reservoir at target, closing valve.");
                       digitalWrite(VALVE_PIN, LOW);
                       glideDownReservoirFull = true; 
@@ -1056,24 +1087,21 @@ void glidercontrol(void* pvParameters) {
           //After the reservoir is full we can regulate the pitch and roll of the glider.
           //We can't do these simultaneously because the electrical system will be overloaded. 
           if (glideDownReservoirFull) {
-            
-              if (!translationmotorRunning) { //Start the motor if it is not already running
-                  digitalWrite(TRAN_SLEEP_PIN, HIGH);
-                  translationmotorRunning = true;
-              }
 
               if (!previousTimeSet) { // Set the previous time to the current time after the reservoir is full.
                   previousTime = currentMillis;
                   previousTimeSet = true;
               }
-              //bool translationmotorRunning, float &pitchSP, float targetstepvalue
-              if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
-              
-                //ToDo: If the error is greater than 5 degrees, let the motor adjust the pitch for e.g. 10 seconds. 
-                moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
-                moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
-              }
 
+              //bool translationmotorRunning, float &pitchSP, float targetstepvalue
+              // if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
+              
+              //   //ToDo: If the error is greater than 5 degrees, let the motor adjust the pitch for e.g. 10 seconds. 
+              //   moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
+              //   moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
+              // }
+              moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
+              
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
                 
                 if (receivedData.depth >= desiredDepth) {
@@ -1085,6 +1113,12 @@ void glidercontrol(void* pvParameters) {
                   gliderState = GlidingUp;
                   stateStartMillis = currentMillis; //Store the time the GlidingUp state started
                   previousTimeSet = false;
+
+                  if (translationmotorRunning) {
+                    digitalWrite(TRAN_SLEEP_PIN, LOW);  // Wake up the motor
+                    translationmotorRunning = false;
+                  }
+                  
                 }
 
                 // if (incomingChar == 'q') {
