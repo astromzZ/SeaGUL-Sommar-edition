@@ -172,7 +172,7 @@ typedef enum {
   read_UART, // Read the pressure and temperature from the MS8607
   start_LTC3225, // Enable the LTC3225 super capacitor charger and wait for up to CHG_timeout minutes for PGOOD to go high
   wait_LTC3225,  // Wait TOPUP_timeout seconds to make sure the capacitors are fully charged
-  start_9603,    // Power on the 9603N, send the message, check the battery voltage
+  send_9603,    // Power on the 9603N, send the message, check the battery voltage
   zzz,           // Turn everything off and put the processor into deep sleep
   wakeUp         // Wake from deep sleep, restore the processor clock speed
 } loop_steps;
@@ -766,7 +766,7 @@ void loop()
         // If the capacitors are still charged OK
         Serial.println(F("Supercapacitors charged!"));
         
-        loop_step = start_9603; // Move on and start the 9603N
+        loop_step = send_9603; // Move on and start the 9603N
       }
 
       else
@@ -781,7 +781,7 @@ void loop()
       
     // ************************************************************************************************
     // Enable the 9603N and attempt to send a message
-    case start_9603:
+    case send_9603:
     
       // Enable power for the 9603N
       Serial.println(F("Enabling 9603N power..."));

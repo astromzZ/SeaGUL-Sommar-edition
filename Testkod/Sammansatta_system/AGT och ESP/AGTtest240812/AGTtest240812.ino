@@ -64,6 +64,7 @@
 #define busVoltageMonEN     34 // Bus voltage monitor enable: pull high to enable bus voltage monitoring (via Q4 and Q3)
 #define spiCS2              35 // D35 can be used as an SPI chip select or as a general purpose IO pin
 #define iridiumRI           41 // Input for the Iridium 9603N Ring Indicator
+#define dropweightPin       7 // Output to release the dropweight
 // Make sure you do not have gnssEN and iridiumPwrEN enabled at the same time!
 // If you do, bad things might happen to the AS179 RF switch!
 
@@ -96,7 +97,7 @@ MS8607 barometricSensor; //Create an instance of the MS8607 object
 // Define how often messages are sent in SECONDS
 // This is the _quickest_ messages will be sent. Could be much slower than this depending on:
 // capacitor charge time; gnss fix time; Iridium timeout; etc.
-unsigned long INTERVAL = 1*60; // 15 minutes
+unsigned long INTERVAL = 15*60; // 15 minutes
 
 // Use this to keep a count of the second alarms from the rtc
 volatile unsigned long secondsCount = 0;
@@ -118,6 +119,9 @@ volatile bool sendmessage = false;
 
 // This flag is used to send the position to land
 volatile bool sendposition = false;
+
+// This flag is used in pickup state
+volatile bool pickupFlag = false;
 
 // iterationCounter is incremented each time a transmission is attempted.
 // It helps keep track of whether messages are being sent successfully.
@@ -145,7 +149,8 @@ float  agtTempC = 0.0; // Temperature in Celcius
 byte   agtFixType = 0; // GNSS fix type: 0=No fix, 1=Dead reckoning, 2=2D, 3=3D, 4=GNSS+Dead reckoning
 bool   agtPGOOD = false; // Flag to indicate if LTC3225 PGOOD is HIGH
 int    agtErr; // Error value returned by IridiumSBD.begin
-String message; // The message to be sent via Iridium
+String message; // The message from the ESP32
+String IridiumMessage // The message to be sent via Iridium
 
 #define VBAT_LOW 2.8 // Minimum voltage for LTC3225
 
@@ -167,6 +172,7 @@ volatile long GNSS_timeout = 5UL;
 // This structure makes it easy to go from any of the steps directly to zzz when (e.g.) the batteries are low
 typedef enum {
   loop_init = 0, // Send the welcome message, check the battery voltage
+  pickup,        // Wait for the dropweight to be released and update the position to land every hour
   start_GNSS,    // Enable the ZOE-M8Q, check the battery voltage
   read_GNSS,     // Wait for up to GNSS_timeout minutes for a valid 3D fix, check the battery voltage
   read_UART, // Read the pressure and temperature from the MS8607
@@ -347,6 +353,7 @@ void setup()
   pinMode(iridiumNA, INPUT); // Configure the Iridium Network Available as an input
   pinMode(superCapPGOOD, INPUT); // Configure the super capacitor charger PGOOD input
   pinMode(D4, OUTPUT); // D4 can be used as a handshake pin for the ESP communication
+  pinMode(dropweightPin, OUTPUT); // Configure the dropweight pin as an output
 
   attachInterrupt(35, uartISR, RISING); // Adjust the interrupt mode as needed, pin 35 for the Artemis Global Tracker
 
@@ -441,15 +448,40 @@ void loop()
         } else {
           Serial.println(F("ESP32 is not awake"));
           poke = false;
+          digitalWrite(dropweightPin, HIGH); // Release the dropweight
+          delay(1000);
+          digitalWrite(dropweightPin, LOW); // Reset the dropweight
           dropweight = true;
-          loop_step = read_UART; // Send that the ESP32 is not awake and that the dropweight is released
+          loop_step = pickup; // Send that the ESP32 is not awake and that the dropweight is released
         }
       } else {
         loop_step = read_UART;
       }
       
       break; // End of case loop_init
+    // ************************************************************************************************
+    // Pickup case, wait for pickup and update the position to land every hour
+    case pickup:
+      pickupFlag = true; // Set the pickup flag
+      INTERVAL = 60*60; // 1 hour
+      sendposition = true; // Send the position to land
 
+      if (sendposition) {
+        sendposition = false;
+        sendmessage = true;
+        loop_step = start_GNSS; // Move on, start the GNSS
+      }
+
+      else if(sendmessage) {
+        sendmessage = false;
+        loop_step = start_LTC3225; // Move on, start the 9603N
+      }
+
+      else {
+        loop_step = zzz; // Go to sleep
+      }
+      
+      break;
     // ************************************************************************************************
     // Power up the GNSS (ZOE-M8Q)
     case start_GNSS:
@@ -564,7 +596,7 @@ void loop()
         Serial.print(F("Longitude (degrees): ")); Serial.println(agtLongitude, 6);
         Serial.print(F("Altitude (m): ")); Serial.println(agtAltitude);
 
-        loop_step = read_pressure; // Move on, read the pressure and temperature
+        // loop_step = read_pressure; // Move on, read the pressure and temperature
       }
       
       else
@@ -588,8 +620,10 @@ void loop()
 
         Serial.println(F("A 3D fix was NOT found!"));
         Serial.println(F("Using default values..."));
-
-        loop_step = read_UART; // Move on, read the pressure and temperature
+        
+        if (!pickupFlag){
+           loop_step = read_UART; // Move on, read the pressure and temperature
+        }
       }
 
       // Power down the GNSS
@@ -874,12 +908,12 @@ void loop()
         
         // Assemble the message using sprintf
         if (myTrackerSettings.DEST > 0) {
-          sprintf(outBuffer, "RB%s,%d%s%s%s%s%s,%s,%s,%s,%s,%d,%d,%d,%s,%s,%s,%d,RB%s", destStr, agtYear, gnssMonth, gnssDay, gnssHour, gnssMin, gnssSec, 
-            latStr, lonStr, altStr, speedStr, agtCourse, agtPDOP, agtSatellites, pressureStr, temperatureStr, vbatStr, iterationCounter, sourceStr);
+          sprintf(outBuffer, "RB%s,%s,%s,%d,%d,%s,%s,%d,%s,RB%s", 
+            latStr, lonStr, agtPDOP, agtSatellites, pressureStr, temperatureStr, iterationCounter, IridiumMessage);
         }
         else {
-          sprintf(outBuffer, "%d%s%s%s%s%s,%s,%s,%s,%s,%d,%d,%d,%s,%s,%s,%d", agtYear, gnssMonth, gnssDay, gnssHour, gnssMin, gnssSec, 
-            latStr, lonStr, altStr, speedStr, agtCourse, agtPDOP, agtSatellites, pressureStr, temperatureStr, vbatStr, iterationCounter);
+          sprintf(outBuffer, "%s,%s,%d,%d,%s,%s,%d, %s", 
+            latStr, lonStr, agtPDOP, agtSatellites, pressureStr, temperatureStr, iterationCounter, IridiumMessage);
         }
 
         // Send the message
@@ -891,7 +925,7 @@ void loop()
         size_t mtBufferSize = sizeof(mt_buffer); // Size of MT buffer
 
 #ifndef noTX
-        agtErr = modem.sendReceiveSBDText(outBuffer, mt_buffer, mtBufferSize); // This could take many seconds to complete and will call ISBDCallback() periodically
+        agtErr = modem.sendSBDText(outBuffer); // This could take many seconds to complete and will call ISBDCallback() periodically
 #else
         agtErr = ISBD_SUCCESS; // Fake success
         mtBufferSize = 0;
