@@ -88,6 +88,8 @@ float displayTranslationSteps = 0;
 //Used to set target pump possition 
 float targetPotentiometerValue = 0;
 float targetStepValue = 0;
+float targetJaw = 0;
+float North = 0;
 //Used to keep track on where the weight is positioned
 float nextPosition = 0;
 float nextDegree = 0;
@@ -369,6 +371,12 @@ void handleSetDesiredDepth() {
     server.send(400, "text/plain", "Invalid request");
   }
 }
+
+void handleSetNorth(){
+  North = displayyaw;
+  Serial.print("North set to: ");
+  Serial.println(North);
+}
 void handleSetTargetStepValue() {
   targetStepValue = displayTranslationSteps; // Set target variable
   Serial.print("Target Step Value set to: ");
@@ -434,7 +442,8 @@ void handleData() {
   json += "\"translationPosition\":" + String(displayTranslationSteps) + ",";
   json += "\"adcValue\":" + String(displaypotentiometer)+",";
   json += "\"setPotValue\":" + String(targetPotentiometerValue) + ",";
-  json += "\"setStepValue\":" + String(targetStepValue);
+  json += "\"setStepValue\":" + String(targetStepValue) + ",";
+  json += "\"setNorth\":" + String(North);
   json += "}";
   server.send(200, "application/json", json);
 }
@@ -568,6 +577,7 @@ void setup() {
     server.on("/setTargetPotentiometerValue", handleSetTargetPotentiometerValue);
     server.on("/setTargetStepValue", handleSetTargetStepValue);
     server.on("/setDesiredDepth", handleSetDesiredDepth);
+    server.on("/setNorth", handleSetNorth);
     server.begin();
     Serial.println("HTTP server started");
 
@@ -618,50 +628,28 @@ void openLogSetup() {
   myLog.syncFile();
 }
 
-void moveRotationMotor (SensorData receivedData, float &currentDegree, float &rollSP, bool &rotationmotorRunning) {
+void moveRotationMotor (bool &rotationmotorRunning,float &rollSP) {
+    int rot_direction = (rollSP < 0) ? 1 : -1;
+    int stepAmount = 100*16 * rot_direction;
+    int rollposition = stepAmount;
 
+    rollposition = constrain(rollposition, -250*16, 250*16);
+
+    rotationMotor.setMaxSpeed(100);
+    rotationMotor.setAcceleration(50);  // Set acceleration to make movement smooth
+
+    rotationMotor.moveTo(rollposition);
+    rotationmotorRunning = true;
+
+    while (rotationmotorRunning && rotationMotor.distanceToGo() != 0) {
+        rotationMotor.runSpeed();
+    }
+
+    rotationMotor.stop();
+    rotationmotorRunning = false;
+    digitalWrite(ROT_SLEEP_PIN, LOW);
 
 }
-
-// void moveTranslationMotor(bool translationmotorRunning, float &pitchSP, float targetstepvalue) {
-//     int transl_direction = (pitchSP < 0) ? 1 : -1;
-//     int currentPos = translationMotor.currentPosition();
-
-//     // Calculate the target position with an appropriate offset based on pitchSP
-//     int targetPosition = targetstepvalue + transl_direction * 5000;
-
-//     // Clamp the target position within the motor's operational range
-//     if (targetPosition < 0) {
-//         targetPosition = 0;
-//     } else if (targetPosition > 92000) {
-//         targetPosition = 92000;
-//     }
-
-//     // Calculate the error between the current position and the target position
-//     int error = targetPosition - currentPos;
-
-//     // If the motor is not already running and the error is significant, start the motor
-//     if (!translationmotorRunning && abs(error) > 50) {
-//         digitalWrite(TRAN_SLEEP_PIN, HIGH);  // Wake up the motor
-//         translationmotorRunning = true;
-//     }
-
-//     // Set motor speed based on the direction and error magnitude
-//     int speed = 800 * ((error > 0) ? 1 : -1);
-//     translationMotor.setSpeed(speed);
-
-//     // If the error is within a small range (deadband), stop the motor
-//     if (abs(error) <= 50) {
-//         translationMotor.stop();
-//         translationmotorRunning = false;
-//         digitalWrite(TRAN_SLEEP_PIN, LOW);  // Put the motor to sleep
-//     } else {
-//         translationMotor.run();
-//     }
-
-//     // Update the display value with the current motor position
-//     displayTranslationSteps = translationMotor.currentPosition();
-// }
 void moveTranslationMotor (bool translationmotorRunning, float &pitchSP, float targetstepvalue){
 
     int transl_direction = (pitchSP < 0) ? 1 : -1;
@@ -847,8 +835,8 @@ void glidercontrol(void* pvParameters) {
 
             success &= (myICM.initializeDMP() == ICM_20948_Stat_Ok);
             success &= (myICM.enableDMPSensor(INV_ICM20948_SENSOR_GAME_ROTATION_VECTOR) == ICM_20948_Stat_Ok);
-            // success &= (myICM.setDMPODRrate(DMP_ODR_Reg_Quat6, 0) == ICM_20948_Stat_Ok);
-                // Enable the FIFO
+            success &= (myICM.setDMPODRrate(DMP_ODR_Reg_Quat6, 0) == ICM_20948_Stat_Ok);
+            // Enable the FIFO
             success &= (myICM.enableFIFO() == ICM_20948_Stat_Ok);
 
             // Set the FIFO mode to snapshot mode
@@ -1414,7 +1402,9 @@ void datagathering(void* pvParameters) {
       while (!setupComplete) { // Wait for the setup to be completed
           delay(100);
       }
-
+      myICM.resetFIFO();
+      delay(35);  // Short delay to let new data accumulate
+      
       myICM.readDMPdataFromFIFO(&IMUdata);
       if ((myICM.status == ICM_20948_Stat_Ok) || (myICM.status == ICM_20948_Stat_FIFOMoreDataAvail)) {
 
@@ -1455,7 +1445,9 @@ void datagathering(void* pvParameters) {
           displaypitch = data.pitch;
           displayroll = data.roll;
           displayyaw = data.yaw;
-
+          // Serial.println(data.pitch);
+          // Serial.println(data.roll);
+          // Serial.println(data.yaw);
           } else {
               Serial.println("Quat6 data not ready");
           }
