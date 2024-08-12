@@ -287,14 +287,15 @@ const char page_html[] PROGMEM = R"rawliteral(
       <h2>Navigation</h2>      
       <table class="fixed-table">
         <tr>
-          <th>Compass Course</th>      
+          <th>Set North</th>      
           <th>GNSS Coordinates</th>
         </tr>
         <tr>
-          <td id="compassCourse"></td>
+          <td id="North"></td>
           <td id="gnssCoordinates"></td>
         </tr>
       </table>
+      <button onclick="setNorth()">Set North</button>
     </div>
 
     <div class="status-card">
@@ -324,7 +325,7 @@ const char page_html[] PROGMEM = R"rawliteral(
 
       <span>New Desired Depth: </span>
       <span id="desiredDepthDisplay">0</span> m
-      </div>
+      
     </div>
 
     <div class="status-card">
@@ -332,6 +333,7 @@ const char page_html[] PROGMEM = R"rawliteral(
       <p id="batteryVoltage"></p>
       <div class = "button-container">
         <button class="button test-button" onclick="checkBat()">Check battery</button>
+      </div>
     </div>
 
     <div class="status-card">
@@ -354,7 +356,6 @@ const char page_html[] PROGMEM = R"rawliteral(
       <h2>Device Signal Strengths</h2>
       <div id="deviceStrengths"></div>
     </div>
-  <!-- </div> Close the container div here -->
 
     <div class="control-card">
       <h2>Controls</h2>
@@ -403,7 +404,6 @@ const char page_html[] PROGMEM = R"rawliteral(
         document.getElementById('roll').innerText = data.roll + "°";
         document.getElementById('yaw').innerText = data.yaw + "°";
         document.getElementById('batteryVoltage').innerText = data.batteryVoltage + " V";
-        document.getElementById('compassCourse').innerText = data.compassCourse + "°";
         document.getElementById('gnssCoordinates').innerText = data.gnssCoordinates;
         document.getElementById('internalTemperature').innerText = data.internalTemperature + " °C";
         document.getElementById('internalPressure').innerText = data.internalPressure + " bar";
@@ -756,7 +756,7 @@ const char page_html[] PROGMEM = R"rawliteral(
         .then(data => {
           const setStepValue = data.setStepValue;
           sendMessage('Value, ' + setStepValue);
-          document.getElementById('stepValueDisplay').textContent ='Target value' + setStepValue;
+          document.getElementById('stepValueDisplay').textContent ='Target value: ' + setStepValue;
           console.log('setStepValue:', setStepValue);
         })
         .catch(error => {
@@ -783,6 +783,28 @@ const char page_html[] PROGMEM = R"rawliteral(
           })
           .catch(error => {
               console.error('Error setting desired depth:', error);
+        });
+    }
+    
+    function setNorth() {
+      sendMessage('Set North');
+      fetch('/setNorth' , { method: 'GET' })
+        .then(response => {
+          if (!response.ok) {
+            throw new Error('Network response was not ok');
+          }
+          sendMessage('North value set');
+        })
+      fetch('/data')
+        .then(response => response.json())
+        .then(data => {
+          const setNorthValue = data.setNorth;
+          sendMessage('North, ' + setNorthValue);
+          document.getElementById('North').textContent = setNorthValue + "°";
+          console.log('setNorthValue:', setNorthValue);
+        })
+        .catch(error => {
+          console.error('Error:', error);
         });
     }
     setInterval(fetchData, 1000); // Fetch data every second
