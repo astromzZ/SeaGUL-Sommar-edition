@@ -1294,43 +1294,43 @@ void glidercontrol(void* pvParameters) {
           rollSP = 0; // Setpoint for roll
 
           //Check if the dropweight has been released. If not, buissness as usual.
-          // if (dropweightReleased) {
-          //     //If the dropweight has been released, we want to transmit that information to land
-          //     //so that the glider can be picked up.
-          //     Serial.println("Dropweight released, pick me up!");
-          //     digitalWrite(ACTIVATION_PIN, HIGH);
+          if (dropweightReleased) {
+              //If the dropweight has been released, we want to transmit that information to land
+              //so that the glider can be picked up.
+              Serial.println("Dropweight released, pick me up!");
+              digitalWrite(ACTIVATION_PIN, HIGH);
 
-          //     while (digitalRead(POKE_PIN) == LOW) { // Might need a timeout counter here if the AGT is dead for some reason.
-          //       delay(100);
-          //     }
+              while (digitalRead(POKE_PIN) == LOW) { // Might need a timeout counter here if the AGT is dead for some reason.
+                delay(100);
+              }
 
-          //     if (digitalRead(POKE_PIN) == HIGH) {
-          //       Serial.println("AGT is ready to receive message");
-          //       delay(1000);
-          //       mySerial.print("d]");
-          //       Serial.println("Message sent: d");
-          //       delay(100);
-          //       digitalWrite(ACTIVATION_PIN, LOW);
-          //     }
+              if (digitalRead(POKE_PIN) == HIGH) {
+                Serial.println("AGT is ready to receive message");
+                delay(1000);
+                mySerial.print("p]");
+                Serial.println("Message sent: p");
+                delay(100);
+                digitalWrite(ACTIVATION_PIN, LOW);
+              }
 
-          // } else {
-          //   Serial.println("Dropweight not released, send position via AGT and wait for command to dive again.");
+          } else {
+            Serial.println("Dropweight not released, send position via AGT and wait for command to dive again.");
 
-          //   digitalWrite(ACTIVATION_PIN, HIGH);
+            digitalWrite(ACTIVATION_PIN, HIGH);
 
-          //   while (digitalRead(POKE_PIN) == LOW) { // Might need a timeout counter here if the AGT is dead for some reason.
-          //     delay(100);
-          //   }
+            while (digitalRead(POKE_PIN) == LOW) { // Might need a timeout counter here if the AGT is dead for some reason.
+              delay(100);
+            }
 
-          //   if (digitalRead(POKE_PIN) == HIGH) {
-          //     Serial.println("AGT is ready to receive message");
-          //     delay(1000);
-          //     mySerial.print("g]");
-          //     Serial.println("Message sent: g");
-          //     delay(100);
-          //     digitalWrite(ACTIVATION_PIN, LOW);
-          //   }
-          // }
+            if (digitalRead(POKE_PIN) == HIGH) {
+              Serial.println("AGT is ready to receive message");
+              delay(1000);
+              mySerial.print("g]");
+              Serial.println("Message sent: g");
+              delay(100);
+              digitalWrite(ACTIVATION_PIN, LOW);
+            }
+          }
 
           //Battery check. If the battery is low, we want to transmit that information to land.
 
