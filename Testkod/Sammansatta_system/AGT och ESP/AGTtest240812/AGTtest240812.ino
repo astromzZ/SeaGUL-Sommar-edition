@@ -69,7 +69,7 @@
 // If you do, bad things might happen to the AS179 RF switch!
 
 //#define noLED // Uncomment this line to disable the White LED
-#define noTX // Uncomment this line to disable the Iridium SBD transmit if you want to test the code without using message credits
+//#define noTX // Uncomment this line to disable the Iridium SBD transmit if you want to test the code without using message credits
 
 // We use Serial1 to communicate with the Iridium modem. Serial1 on the ATP uses pin 24 for TX and 25 for RX. AGT uses the same pins.
 
@@ -123,6 +123,24 @@ volatile bool sendposition = false;
 // This flag is used in pickup state
 volatile bool pickupFlag = false;
 
+// This flag is used to check if GNSS started
+volatile bool gnssStarted = false;
+
+// This flag is used to check if GNSS read
+volatile bool gnssRead = false;
+
+// This flag is used to check if the super capacitors started
+volatile bool superCapStarted = false;
+
+// This flag is used to check if the super capacitors charged
+volatile bool superCapCharged = false;
+
+// This flag is used to check if message was sent correctly
+volatile bool messageSent = false;
+
+// This flag is used to check if the message was received correctly
+volatile bool messageReceived = false;
+
 // iterationCounter is incremented each time a transmission is attempted.
 // It helps keep track of whether messages are being sent successfully.
 // It also indicates if the tracker has been reset (the count will go back to zero).
@@ -150,7 +168,8 @@ byte   agtFixType = 0; // GNSS fix type: 0=No fix, 1=Dead reckoning, 2=2D, 3=3D,
 bool   agtPGOOD = false; // Flag to indicate if LTC3225 PGOOD is HIGH
 int    agtErr; // Error value returned by IridiumSBD.begin
 String message; // The message from the ESP32
-String IridiumMessage // The message to be sent via Iridium
+String IridiumMessage; // The message to be sent via Iridium
+String receivedMessage; // The message received from Iridium
 
 #define VBAT_LOW 2.8 // Minimum voltage for LTC3225
 
@@ -173,12 +192,7 @@ volatile long GNSS_timeout = 5UL;
 typedef enum {
   loop_init = 0, // Send the welcome message, check the battery voltage
   pickup,        // Wait for the dropweight to be released and update the position to land every hour
-  start_GNSS,    // Enable the ZOE-M8Q, check the battery voltage
-  read_GNSS,     // Wait for up to GNSS_timeout minutes for a valid 3D fix, check the battery voltage
-  read_UART, // Read the pressure and temperature from the MS8607
-  start_LTC3225, // Enable the LTC3225 super capacitor charger and wait for up to CHG_timeout minutes for PGOOD to go high
-  wait_LTC3225,  // Wait TOPUP_timeout seconds to make sure the capacitors are fully charged
-  send_9603,    // Power on the 9603N, send the message, check the battery voltage
+  read_UART,     // Read the pressure and temperature from the MS8607
   zzz,           // Turn everything off and put the processor into deep sleep
   wakeUp         // Wake from deep sleep, restore the processor clock speed
 } loop_steps;
@@ -308,6 +322,495 @@ void clearSerialBuffer(SoftwareSerial &serial) {
     serial.read();
   }
 }
+
+void start_GNSS () {
+
+  Serial.println(F("Powering up the GNSS..."));
+  
+  gnssON(); // Enable power for the GNSS
+
+  pinMode(gnssBckpBatChgEN, OUTPUT); // GNSS backup batttery charge control; output + low = enable charging
+  digitalWrite(gnssBckpBatChgEN, LOW);
+  //pinMode(gnssBckpBatChgEN, INPUT); // GNSS backup batttery charge control; input = disable charging
+
+  delay(2000); // Give it time to power up
+
+  agtWire.begin(); // Set up the I2C pins
+  agtWire.setClock(100000); // Use 100kHz for best performance
+  setAGTWirePullups(0); // Remove the pull-ups from the I2C pins (internal to the Artemis) for best performance
+  
+  
+    if (myGNSS.begin(agtWire) == false) //Connect to the u-blox module using agtWire port
+    {
+        // If we were unable to connect to the ZOE-M8Q:
+        
+        // Send a warning message
+        Serial.println(F("*** Ublox GNSS not detected at default I2C address ***"));
+        
+        // Set the lat, long etc. to default values
+        agtLatitude = 0.0; // Latitude in degrees
+        agtLongitude = 0.0; // Longitude in degrees
+        agtAltitude = 0; // Altitude above Median Seal Level in m
+        agtSpeed = 0.0; // Ground speed in m/s
+        agtSatellites = 0; // Number of satellites (SVs) used in the solution
+        agtCourse = 0; // Course (heading) in degrees
+        agtPDOP = 0;  // Positional Dilution of Precision in m
+        agtYear = 1970; // GNSS Year
+        agtMonth = 1; // GNSS month
+        agtDay = 1; // GNSS day
+        agtHour = 0; // GNSS hours
+        agtMinute = 0; // GNSS minutes
+        agtSecond = 0; // GNSS seconds
+        agtMilliseconds = 0; // GNSS milliseconds
+
+        // Power down the GNSS
+        gnssOFF(); // Disable power for the GNSS
+
+    }
+
+    else { // If the GNSS started up OK
+        
+        //myGNSS.enableDebugging(); // Enable debug messages
+        myGNSS.setI2COutput(COM_TYPE_UBX); // Limit I2C output to UBX (disable the NMEA noise)
+
+        // If we are going to change the dynamic platform model, let's do it here.
+        // Possible values are:
+        // PORTABLE, STATIONARY, PEDESTRIAN, AUTOMOTIVE, SEA, AIRBORNE1g, AIRBORNE2g, AIRBORNE4g, WRIST, BIKE
+        if (myGNSS.setDynamicModel(DYN_MODEL_PORTABLE) == false)
+        {
+        Serial.println(F("*** Warning: setDynamicModel may have failed ***"));
+        }
+        else
+        {
+        Serial.println(F("Dynamic Model updated"));
+        }
+        gnssStarted = true;
+    }
+}
+
+// ************************************************************************************************
+// Read a fix from the ZOE-M8Q
+void read_GNSS() {
+
+  Serial.println(F("Waiting for a 3D GNSS fix..."));
+
+  agtFixType = 0; // Clear the fix type
+  
+  // Look for GNSS signal for up to GNSS_timeout minutes
+  for (unsigned long tnow = millis(); (agtFixType != 3) && ((millis() - tnow) < (GNSS_timeout * 60UL * 1000UL));)
+  {
+  
+    agtFixType = myGNSS.getFixType(); // Get the GNSS fix type
+    
+    // Check battery voltage now we are drawing current for the GNSS
+    // If voltage is low, stop looking for GNSS and go to sleep
+
+  }
+  if (agtFixType == 3) // Check if we got a valid 3D fix
+  {
+    // Get the time and position etc.
+    // Get the time first to hopefully avoid second roll-over problems
+    agtMilliseconds = myGNSS.getMillisecond();
+    agtSecond = myGNSS.getSecond();
+    agtMinute = myGNSS.getMinute();
+    agtHour = myGNSS.getHour();
+    agtDay = myGNSS.getDay();
+    agtMonth = myGNSS.getMonth();
+    agtYear = myGNSS.getYear(); // Get the year
+    agtLatitude = (float)myGNSS.getLatitude() / 10000000.0; // Get the latitude in degrees
+    agtLongitude = (float)myGNSS.getLongitude() / 10000000.0; // Get the longitude in degrees
+    agtAltitude = myGNSS.getAltitudeMSL() / 1000; // Get the altitude above Mean Sea Level in m
+    agtSpeed = (float)myGNSS.getGroundSpeed() / 1000.0; // Get the ground speed in m/s
+    agtSatellites = myGNSS.getSIV(); // Get the number of satellites used in the fix
+    agtCourse = myGNSS.getHeading() / 10000000; // Get the heading in degrees
+    agtPDOP = myGNSS.getPDOP() / 100; // Get the PDOP in m
+
+    Serial.println(F("A 3D fix was found!"));
+    Serial.print(F("Latitude (degrees): ")); Serial.println(agtLatitude, 6);
+    Serial.print(F("Longitude (degrees): ")); Serial.println(agtLongitude, 6);
+    Serial.print(F("Altitude (m): ")); Serial.println(agtAltitude);
+    gnssRead = true;
+
+  }
+  
+  else
+  {
+    // We didn't get a 3D fix so
+    // set the lat, long etc. to default values
+    agtLatitude = 0.0; // Latitude in degrees
+    agtLongitude = 0.0; // Longitude in degrees
+    agtAltitude = 0; // Altitude above Median Seal Level in m
+    agtSpeed = 0.0; // Ground speed in m/s
+    agtSatellites = 0; // Number of satellites (SVs) used in the solution
+    agtCourse = 0; // Course (heading) in degrees
+    agtPDOP = 0;  // Positional Dilution of Precision in m
+    agtYear = 1970; // GNSS Year
+    agtMonth = 1; // GNSS month
+    agtDay = 1; // GNSS day
+    agtHour = 0; // GNSS hours
+    agtMinute = 0; // GNSS minutes
+    agtSecond = 0; // GNSS seconds
+    agtMilliseconds = 0; // GNSS milliseconds
+
+    Serial.println(F("A 3D fix was NOT found!"));
+    Serial.println(F("Using default values..."));
+    }
+  // Power down the GNSS
+  Serial.println(F("Powering down the GNSS..."));
+  gnssOFF(); // Disable power for the GNSS
+}
+
+// Start the LTC3225 supercapacitor charger
+void start_LTC3225() {
+
+  // Enable the supercapacitor charger
+  Serial.println(F("Enabling the supercapacitor charger..."));
+  digitalWrite(superCapChgEN, HIGH); // Enable the super capacitor charger
+
+  Serial.println(F("Waiting for supercapacitors to charge..."));
+  delay(2000);
+
+  agtPGOOD = false; // Flag to show if PGOOD is HIGH
+  
+  // Wait for PGOOD to go HIGH for up to CHG_timeout minutes
+  for (unsigned long tnow = millis(); (!agtPGOOD) && (millis() - tnow < CHG_timeout * 60UL * 1000UL);)
+  {
+  
+    agtPGOOD = digitalRead(superCapPGOOD); // Read the PGOOD pin
+    delay(100); 
+  }
+
+
+    if (agtPGOOD)
+    {
+        // If the capacitors charged OK
+        Serial.println(F("Supercapacitors charged!"));
+        superCapStarted = true;
+    }
+
+    else
+    {
+        // The super capacitors did not charge so power down and go to sleep
+        Serial.println(F("*** Supercapacitors failed to charge ***"));
+
+    }
+  
+}
+
+    // ************************************************************************************************
+    // Give the super capacitors some extra time to charge
+void wait_LTC3225() {
+
+  Serial.println(F("Giving the supercapacitors extra time to charge..."));
+
+  // Wait for TOPUP_timeout seconds, keep checking PGOOD and the battery voltage
+  for (unsigned long tnow = millis(); (millis() - tnow) < (TOPUP_timeout * 1000UL); )
+  {
+  
+    // Check battery voltage now we are drawing current for the LTC3225
+    // If voltage is low, stop charging and go to sleep
+
+
+    delay(100); // Let's not pound the bus voltage monitor too hard!
+
+  }
+
+  // If voltage is low then go straight to sleep
+
+
+  if (agtPGOOD)
+  {
+    // If the capacitors are still charged OK
+    Serial.println(F("Supercapacitors charged!"));
+    superCapCharged = true; 
+    
+  }
+
+  else
+  {
+    // The super capacitors did not charge so power down and go to sleep
+    Serial.println(F("*** Supercapacitors failed to hold charge in wait_LTC3225 ***"));
+
+  }
+}
+    // ************************************************************************************************
+    // Enable the 9603N and attempt to send a message
+void send_9603() {
+
+  // Enable power for the 9603N
+  Serial.println(F("Enabling 9603N power..."));
+  digitalWrite(iridiumPwrEN, HIGH); // Enable Iridium Power
+  delay(1000);
+
+  // Relax timing constraints waiting for the supercap to recharge.
+  modem.setPowerProfile(IridiumSBD::USB_POWER_PROFILE);
+
+  // Begin satellite modem operation
+  // Also begin the serial port connected to the satellite modem via IridiumSBD::beginSerialPort
+  Serial.println(F("Starting modem..."));
+  agtErr = modem.begin();
+
+  // Check if the modem started correctly
+  if (agtErr != ISBD_SUCCESS)
+  {
+    // If the modem failed to start, disable it and go to sleep
+    Serial.print(F("*** modem.begin failed with error "));
+    Serial.print(agtErr);
+    Serial.println(F(" ***"));
+  }
+
+  else
+  {
+    // The modem started OK so let's try to send the message
+    char outBuffer[120]; // Use outBuffer to store the message. Always try to keep message short to avoid wasting credits
+
+    // Apollo3 v2.1 does not support printf or sprintf correctly. We need to manually add preceeding zeros
+    // and convert floats to strings
+
+    // Convert the floating point values into strings
+    char latStr[15]; // latitude string
+    ftoa(agtLatitude,latStr,6,15);
+    char lonStr[15]; // longitude string
+    ftoa(agtLongitude,lonStr,6,15);
+    char altStr[15]; // altitude string
+    ftoa(agtAltitude,altStr,2,15);
+    char vbatStr[6]; // battery voltage string
+    ftoa(agtVbat,vbatStr,2,6);
+    char speedStr[8]; // speed string
+    ftoa(agtSpeed,speedStr,2,8);
+    char pressureStr[9]; // pressure string
+    ftoa(agtPascals,pressureStr,0,9);
+    char temperatureStr[10]; // temperature string
+    ftoa(agtTempC,temperatureStr,1,10);
+
+    // Convert the date and time into strings
+    char gnssDay[3];
+    char gnssMonth[3];
+    if (agtDay < 10)
+      sprintf(gnssDay, "0%d", agtDay);
+    else
+      sprintf(gnssDay, "%d", agtDay);
+    if (agtMonth < 10)
+      sprintf(gnssMonth, "0%d", agtMonth);
+    else
+      sprintf(gnssMonth, "%d", agtMonth);
+  
+    char gnssHour[3];
+    char gnssMin[3];
+    char gnssSec[3];
+    if (agtHour < 10)
+      sprintf(gnssHour, "0%d", agtHour);
+    else
+      sprintf(gnssHour, "%d", agtHour);
+    if (agtMinute < 10)
+      sprintf(gnssMin, "0%d", agtMinute);
+    else
+      sprintf(gnssMin, "%d", agtMinute);
+    if (agtSecond < 10)
+      sprintf(gnssSec, "0%d", agtSecond);
+    else
+      sprintf(gnssSec, "%d", agtSecond);
+
+    char destStr[8];
+    if (myTrackerSettings.DEST < 10)
+      sprintf(destStr, "000000%d", myTrackerSettings.DEST);
+    else if (myTrackerSettings.DEST < 100)
+      sprintf(destStr, "00000%d", myTrackerSettings.DEST);
+    else if (myTrackerSettings.DEST < 1000)
+      sprintf(destStr, "0000%d", myTrackerSettings.DEST);
+    else if (myTrackerSettings.DEST < 10000)
+      sprintf(destStr, "000%d", myTrackerSettings.DEST);
+    else if (myTrackerSettings.DEST < 100000)
+      sprintf(destStr, "00%d", myTrackerSettings.DEST);
+    else if (myTrackerSettings.DEST < 1000000)
+      sprintf(destStr, "0%d", myTrackerSettings.DEST);
+    else
+      sprintf(destStr, "%d", myTrackerSettings.DEST);
+    
+    char sourceStr[8];
+    if (myTrackerSettings.SOURCE < 10)
+      sprintf(sourceStr, "000000%d", myTrackerSettings.SOURCE);
+    else if (myTrackerSettings.SOURCE < 100)
+      sprintf(sourceStr, "00000%d", myTrackerSettings.SOURCE);
+    else if (myTrackerSettings.SOURCE < 1000)
+      sprintf(sourceStr, "0000%d", myTrackerSettings.SOURCE);
+    else if (myTrackerSettings.SOURCE < 10000)
+      sprintf(sourceStr, "000%d", myTrackerSettings.SOURCE);
+    else if (myTrackerSettings.SOURCE < 100000)
+      sprintf(sourceStr, "00%d", myTrackerSettings.SOURCE);
+    else if (myTrackerSettings.SOURCE < 1000000)
+      sprintf(sourceStr, "0%d", myTrackerSettings.SOURCE);
+    else
+      sprintf(sourceStr, "%d", myTrackerSettings.SOURCE);
+    
+    // Assemble the message using sprintf
+    if (myTrackerSettings.DEST > 0) {
+      sprintf(outBuffer, "RB%s,%s,%s,%d,%d,%s,%s,%d,%s,RB%s", 
+        latStr, lonStr, agtPDOP, agtSatellites, pressureStr, temperatureStr, iterationCounter, IridiumMessage);
+    }
+    else {
+      sprintf(outBuffer, "%s,%s,%d,%d,%s,%s,%d, %s", 
+        latStr, lonStr, agtPDOP, agtSatellites, pressureStr, temperatureStr, iterationCounter, IridiumMessage);
+    }
+
+    // Send the message
+    Serial.print(F("Transmitting message '"));
+    Serial.print(outBuffer);
+    Serial.println(F("'"));
+
+#ifndef noTX
+    agtErr = modem.sendSBDText(outBuffer); // This could take many seconds to complete and will call ISBDCallback() periodically
+#else
+    agtErr = ISBD_SUCCESS; // Fake success
+    mtBufferSize = 0;
+#endif
+
+    // Check if the message sent OK
+    if (agtErr != ISBD_SUCCESS)
+    {
+      Serial.print(F("Transmission failed with error code "));
+      Serial.println(agtErr);
+#ifndef noLED
+      // Turn on LED to indicate failed send
+      digitalWrite(LED, HIGH);
+#endif
+    }
+    else
+    {
+      Serial.println(F(">>> Message sent! <<<"));
+      messageSent = true;
+#ifndef noLED
+      // Flash LED rapidly to indicate successful send
+      for (int i = 0; i < 10; i++)
+      {
+        digitalWrite(LED, HIGH);
+        delay(100);
+        digitalWrite(LED, LOW);
+        delay(100);
+      }
+#endif
+      }
+  }
+  // Clear the Mobile Originated message buffer
+    Serial.println(F("Clearing the MO buffer."));
+    agtErr = modem.clearBuffers(ISBD_CLEAR_MO); // Clear MO buffer
+    if (agtErr != ISBD_SUCCESS) {
+        Serial.print(F("*** modem.clearBuffers failed with error "));
+        Serial.print(agtErr);
+        Serial.println(F(" ***"));
+    }
+
+    // Power down the modem
+    Serial.println(F("Putting the 9603N to sleep."));
+    agtErr = modem.sleep();
+    if (agtErr != ISBD_SUCCESS) {
+        Serial.print(F("*** modem.sleep failed with error "));
+        Serial.print(agtErr);
+        Serial.println(F(" ***"));
+    }
+}
+
+void receive_9603() {
+    uint8_t mt_buffer[200]; // Buffer to store received message
+    size_t mtBufferSize = sizeof(mt_buffer); // Size of MT buffer
+    int err = ISBD_SUCCESS;
+    bool ring = false;
+    int loop_count = 0;
+
+    // Enable power for the 9603N
+    Serial.println(F("Enabling 9603N power..."));
+    digitalWrite(iridiumPwrEN, HIGH); // Enable Iridium Power
+    delay(1000);
+
+    // Set up power profile
+    modem.setPowerProfile(IridiumSBD::USB_POWER_PROFILE);
+
+    // Begin satellite modem operation
+    Serial.println(F("Starting modem..."));
+    err = modem.begin();
+    if (err != ISBD_SUCCESS) {
+        Serial.print(F("modem.begin failed with error "));
+        Serial.println(err);
+        if (err == ISBD_NO_MODEM_DETECTED) {
+            Serial.println(F("No modem detected: check wiring."));
+        }
+        return;
+    }
+
+    // Wait up to 10 minutes (600 seconds) for a ring indicator (RI) or message
+    Serial.println(F("Waiting for RING..."));
+    while (loop_count < 600) {  // Loop for up to 600 seconds (10 minutes)
+        ring = modem.hasRingAsserted();
+
+        if (ring || modem.getWaitingMessageCount() > 0) {
+            Serial.println(F("RING asserted or message available. Attempting to read incoming message."));
+            break;
+        }
+
+        delay(1000);  // Wait for 1 second before checking again
+        loop_count++;
+    }
+
+    if (!ring && modem.getWaitingMessageCount() == 0) {
+        Serial.println(F("No RING or messages received within the timeout period."));
+        return;
+    }
+
+    // Clear the Mobile Originated message buffer - just in case it has an old message in it!
+    Serial.println(F("Clearing the MO buffer."));
+    err = modem.clearBuffers(ISBD_CLEAR_MO);
+    if (err != ISBD_SUCCESS) {
+        Serial.print(F("clearBuffers failed with error "));
+        Serial.println(err);
+        return;
+    }
+
+    // Attempt to receive the message
+    err = modem.sendReceiveSBDText(NULL, mt_buffer, mtBufferSize);
+    if (err != ISBD_SUCCESS) {
+        Serial.print(F("sendReceiveSBDText failed with error "));
+        Serial.println(err);
+        return;
+    }
+
+    Serial.println(F("Message received!"));
+    Serial.print(F("Inbound message size is "));
+    Serial.println(mtBufferSize);
+    messageReceived = true;
+
+    for (int i = 0; i < (int)mtBufferSize; ++i) {
+        Serial.print(mt_buffer[i], HEX);
+        if (isprint(mt_buffer[i])) {
+            Serial.print(F("("));
+            Serial.write(mt_buffer[i]);
+            Serial.print(F(")"));
+        }
+        Serial.print(F(" "));
+    }
+    Serial.println();
+
+    Serial.print(F("Messages remaining to be retrieved: "));
+    Serial.println(modem.getWaitingMessageCount());
+
+    // Wait for the RING indicator to clear, if it's still asserted
+    while (modem.hasRingAsserted()) {
+        Serial.println(F("RING is still asserted. Waiting for it to clear..."));
+        delay(1000);
+    }
+
+    Serial.println(F("RING has cleared."));
+
+    // Power down the modem
+    Serial.println(F("Putting the 9603N to sleep."));
+    err = modem.sleep();
+    if (err != ISBD_SUCCESS) {
+        Serial.print(F("*** modem.sleep failed with error "));
+        Serial.print(err);
+        Serial.println(F(" ***"));
+    }
+}
+
+
 
 void setup()
 {
@@ -447,6 +950,7 @@ void loop()
           loop_step = zzz; // Go to sleep
         } else {
           Serial.println(F("ESP32 is not awake"));
+          mySerial.println("dropweight"); // Send that the dropweight is released
           poke = false;
           digitalWrite(dropweightPin, HIGH); // Release the dropweight
           delay(1000);
@@ -464,173 +968,28 @@ void loop()
     case pickup:
       pickupFlag = true; // Set the pickup flag
       INTERVAL = 60*60; // 1 hour
-      sendposition = true; // Send the position to land
-
-      if (sendposition) {
-        sendposition = false;
-        sendmessage = true;
-        loop_step = start_GNSS; // Move on, start the GNSS
+      if (dropweight) {
+        IridiumMessage = "dropweight, awaiting pickup"; // Send that the dropweight is released, awaiting pickup
       }
-
-      else if(sendmessage) {
-        sendmessage = false;
-        loop_step = start_LTC3225; // Move on, start the 9603N
-      }
-
       else {
-        loop_step = zzz; // Go to sleep
+        IridiumMessage = "awaiting pickup"; // Send that the glider is awaiting pickup
       }
+      start_GNSS();
+      if (gnssStarted) {
+        read_GNSS();
+        gnssStarted = false;
+      }
+      if (gnssRead) {
+        send_9603();
+        gnssRead = false;
+      }
+
+      loop_step = zzz;
       
       break;
     // ************************************************************************************************
     // Power up the GNSS (ZOE-M8Q)
-    case start_GNSS:
-
-      Serial.println(F("Powering up the GNSS..."));
-      
-      gnssON(); // Enable power for the GNSS
-
-      pinMode(gnssBckpBatChgEN, OUTPUT); // GNSS backup batttery charge control; output + low = enable charging
-      digitalWrite(gnssBckpBatChgEN, LOW);
-      //pinMode(gnssBckpBatChgEN, INPUT); // GNSS backup batttery charge control; input = disable charging
-
-      delay(2000); // Give it time to power up
-
-      agtWire.begin(); // Set up the I2C pins
-      agtWire.setClock(100000); // Use 100kHz for best performance
-      setAGTWirePullups(0); // Remove the pull-ups from the I2C pins (internal to the Artemis) for best performance
-      
-      
-        if (myGNSS.begin(agtWire) == false) //Connect to the u-blox module using agtWire port
-        {
-            // If we were unable to connect to the ZOE-M8Q:
-            
-            // Send a warning message
-            Serial.println(F("*** Ublox GNSS not detected at default I2C address ***"));
-            
-            // Set the lat, long etc. to default values
-            agtLatitude = 0.0; // Latitude in degrees
-            agtLongitude = 0.0; // Longitude in degrees
-            agtAltitude = 0; // Altitude above Median Seal Level in m
-            agtSpeed = 0.0; // Ground speed in m/s
-            agtSatellites = 0; // Number of satellites (SVs) used in the solution
-            agtCourse = 0; // Course (heading) in degrees
-            agtPDOP = 0;  // Positional Dilution of Precision in m
-            agtYear = 1970; // GNSS Year
-            agtMonth = 1; // GNSS month
-            agtDay = 1; // GNSS day
-            agtHour = 0; // GNSS hours
-            agtMinute = 0; // GNSS minutes
-            agtSecond = 0; // GNSS seconds
-            agtMilliseconds = 0; // GNSS milliseconds
-
-            // Power down the GNSS
-            gnssOFF(); // Disable power for the GNSS
-
-            loop_step = read_pressure; // Move on, skip reading the GNSS fix
-        }
-
-        else { // If the GNSS started up OK
-            
-            //myGNSS.enableDebugging(); // Enable debug messages
-            myGNSS.setI2COutput(COM_TYPE_UBX); // Limit I2C output to UBX (disable the NMEA noise)
-
-            // If we are going to change the dynamic platform model, let's do it here.
-            // Possible values are:
-            // PORTABLE, STATIONARY, PEDESTRIAN, AUTOMOTIVE, SEA, AIRBORNE1g, AIRBORNE2g, AIRBORNE4g, WRIST, BIKE
-            if (myGNSS.setDynamicModel(DYN_MODEL_PORTABLE) == false)
-            {
-            Serial.println(F("*** Warning: setDynamicModel may have failed ***"));
-            }
-            else
-            {
-            Serial.println(F("Dynamic Model updated"));
-            }
-            
-            loop_step = read_GNSS; // Move on, read the GNSS fix
-        }
-        
     
-
-      break; // End of case start_GNSS
-
-    // ************************************************************************************************
-    // Read a fix from the ZOE-M8Q
-    case read_GNSS:
-
-      Serial.println(F("Waiting for a 3D GNSS fix..."));
-
-      agtFixType = 0; // Clear the fix type
-      
-      // Look for GNSS signal for up to GNSS_timeout minutes
-      for (unsigned long tnow = millis(); (agtFixType != 3) && ((millis() - tnow) < (GNSS_timeout * 60UL * 1000UL));)
-      {
-      
-        agtFixType = myGNSS.getFixType(); // Get the GNSS fix type
-        
-        // Check battery voltage now we are drawing current for the GNSS
-        // If voltage is low, stop looking for GNSS and go to sleep
-
-      }
-      if (agtFixType == 3) // Check if we got a valid 3D fix
-      {
-        // Get the time and position etc.
-        // Get the time first to hopefully avoid second roll-over problems
-        agtMilliseconds = myGNSS.getMillisecond();
-        agtSecond = myGNSS.getSecond();
-        agtMinute = myGNSS.getMinute();
-        agtHour = myGNSS.getHour();
-        agtDay = myGNSS.getDay();
-        agtMonth = myGNSS.getMonth();
-        agtYear = myGNSS.getYear(); // Get the year
-        agtLatitude = (float)myGNSS.getLatitude() / 10000000.0; // Get the latitude in degrees
-        agtLongitude = (float)myGNSS.getLongitude() / 10000000.0; // Get the longitude in degrees
-        agtAltitude = myGNSS.getAltitudeMSL() / 1000; // Get the altitude above Mean Sea Level in m
-        agtSpeed = (float)myGNSS.getGroundSpeed() / 1000.0; // Get the ground speed in m/s
-        agtSatellites = myGNSS.getSIV(); // Get the number of satellites used in the fix
-        agtCourse = myGNSS.getHeading() / 10000000; // Get the heading in degrees
-        agtPDOP = myGNSS.getPDOP() / 100; // Get the PDOP in m
-
-        Serial.println(F("A 3D fix was found!"));
-        Serial.print(F("Latitude (degrees): ")); Serial.println(agtLatitude, 6);
-        Serial.print(F("Longitude (degrees): ")); Serial.println(agtLongitude, 6);
-        Serial.print(F("Altitude (m): ")); Serial.println(agtAltitude);
-
-        // loop_step = read_pressure; // Move on, read the pressure and temperature
-      }
-      
-      else
-      {
-        // We didn't get a 3D fix so
-        // set the lat, long etc. to default values
-        agtLatitude = 0.0; // Latitude in degrees
-        agtLongitude = 0.0; // Longitude in degrees
-        agtAltitude = 0; // Altitude above Median Seal Level in m
-        agtSpeed = 0.0; // Ground speed in m/s
-        agtSatellites = 0; // Number of satellites (SVs) used in the solution
-        agtCourse = 0; // Course (heading) in degrees
-        agtPDOP = 0;  // Positional Dilution of Precision in m
-        agtYear = 1970; // GNSS Year
-        agtMonth = 1; // GNSS month
-        agtDay = 1; // GNSS day
-        agtHour = 0; // GNSS hours
-        agtMinute = 0; // GNSS minutes
-        agtSecond = 0; // GNSS seconds
-        agtMilliseconds = 0; // GNSS milliseconds
-
-        Serial.println(F("A 3D fix was NOT found!"));
-        Serial.println(F("Using default values..."));
-        
-        if (!pickupFlag){
-           loop_step = read_UART; // Move on, read the pressure and temperature
-        }
-      }
-
-      // Power down the GNSS
-      Serial.println(F("Powering down the GNSS..."));
-      gnssOFF(); // Disable power for the GNSS
-
-      break; // End of case read_GNSS
 
     // ************************************************************************************************
 
@@ -661,12 +1020,28 @@ void loop()
         if (message.startsWith("m")) //The ESP wants to transmit a message
         {
           Serial.println("ESP wants to transmit a message");
-          sendmessage = true;
+          IridiumMessage = message;
           uartWakeUpFlag = false;
           delay(1000);
           digitalWrite(D4, LOW); // Set D4 low to signal that the message has been recieved
           clearSerialBuffer(mySerial);
-          loop_step = start_GNSS; // If the ESP wants to transmit a message, we send the gps coordinates as well. 
+          start_GNSS();
+          if (gnssStarted) {
+            read_GNSS();
+            gnssStarted = false;
+          }
+          if (gnssRead) {
+            send_9603();
+            mySerial.println(agtLatitude, agtLongitude);
+            gnssRead = false;
+          }
+          if (messageSent) {
+            receive_9603();
+            messageSent = false;
+            mySerial.println(receivedMessage);
+            receivedMessage = "";
+          }
+          loop_step = zzz;
         }
         else if (message == "s") //The ESP wants the AGT to go to sleep
         {
@@ -678,27 +1053,53 @@ void loop()
           loop_step = zzz;
         }
         else if (message == "g") {
-          Serial.println("ESP wants to send GNSS fix");
-          sendposition = true;
+          Serial.println("ESP wants to get GNSS fix");
           uartWakeUpFlag = false;
           delay(1000);
           digitalWrite(D4, LOW); // Set D4 low to signal that the message has been recieved
           clearSerialBuffer(mySerial);
-          loop_step = start_GNSS;
+          start_GNSS();
+          if (gnssStarted) {
+            read_GNSS();
+            gnssStarted = false;
+          }
+          if (gnssRead) {
+            mySerial.println(agtLatitude, agtLongitude);
+            gnssRead = false;
+          }
+          else {
+            mySerial.println("No GNSS fix");
+          }
+          loop_step = zzz;
         }
         else if (message == "r") {
           Serial.println("ESP wants to get message");
           // mySerial.println("Hi! This is my message");
           uartWakeUpFlag = false;
           delay(1000);
-          // loop_step = wait_for_ring;
+          receive_9603();
           digitalWrite(D4, LOW); // Set D4 low to signal that the message has been recieved
           clearSerialBuffer(mySerial);
+          if (messageReceived) {
+            mySerial.println(receivedMessage);
+            messageReceived = false;
+          }
+          else (mySerial.println("No message received"));
           loop_step = zzz;
+        }
+        else if (message == "p") {
+          Serial.println("ESP wants to know if the dropweight is released");
+          uartWakeUpFlag = false;
+          dropweight = true;
+          delay(1000);
+          digitalWrite(D4, LOW); // Set D4 low to signal that the message has been recieved
+          clearSerialBuffer(mySerial);
+          mySerial.println("dropweight");
+          loop_step = pickup;
         }
         else
         {
-          Serial.println("Unknown message, going to sleep");
+          mySerial.println("Unknown message, going to sleep");
           delay(1000);
           digitalWrite(D4, LOW); // Set D4 low to signal that the message has been recieved
           clearSerialBuffer(mySerial);
@@ -707,7 +1108,7 @@ void loop()
         }
       } else if (dropweight) {
         Serial.println("Dropweight released, transmit to land");
-        loop_step = start_GNSS;
+        loop_step = pickup;
       } else {
         loop_step = zzz; //Go to sleep if the ESP doesn't wan't to do anything
       }
@@ -717,343 +1118,6 @@ void loop()
       break; // End of case read_UART
 
     // ************************************************************************************************
-    // Start the LTC3225 supercapacitor charger
-    case start_LTC3225:
-
-      // Enable the supercapacitor charger
-      Serial.println(F("Enabling the supercapacitor charger..."));
-      digitalWrite(superCapChgEN, HIGH); // Enable the super capacitor charger
-
-      Serial.println(F("Waiting for supercapacitors to charge..."));
-      delay(2000);
-
-      agtPGOOD = false; // Flag to show if PGOOD is HIGH
-      
-      // Wait for PGOOD to go HIGH for up to CHG_timeout minutes
-      for (unsigned long tnow = millis(); (!agtPGOOD) && (millis() - tnow < CHG_timeout * 60UL * 1000UL);)
-      {
-      
-        agtPGOOD = digitalRead(superCapPGOOD); // Read the PGOOD pin
-        delay(100); 
-      }
-
-
-        if (agtPGOOD)
-        {
-            // If the capacitors charged OK
-            Serial.println(F("Supercapacitors charged!"));
-            
-            loop_step = wait_LTC3225; // Move on and give the capacitors extra charging time
-        }
-
-        else
-        {
-            // The super capacitors did not charge so power down and go to sleep
-            Serial.println(F("*** Supercapacitors failed to charge ***"));
-
-            loop_step = zzz;
-        }
-      
-      break; // End of case start_LTC3225
-
-    // ************************************************************************************************
-    // Give the super capacitors some extra time to charge
-    case wait_LTC3225:
-    
-      Serial.println(F("Giving the supercapacitors extra time to charge..."));
- 
-      // Wait for TOPUP_timeout seconds, keep checking PGOOD and the battery voltage
-      for (unsigned long tnow = millis(); (millis() - tnow) < (TOPUP_timeout * 1000UL); )
-      {
-      
-        // Check battery voltage now we are drawing current for the LTC3225
-        // If voltage is low, stop charging and go to sleep
-
-
-        delay(100); // Let's not pound the bus voltage monitor too hard!
-
-      }
-
-      // If voltage is low then go straight to sleep
-    
-
-      if (agtPGOOD)
-      {
-        // If the capacitors are still charged OK
-        Serial.println(F("Supercapacitors charged!"));
-        
-        loop_step = send_9603; // Move on and start the 9603N
-      }
-
-      else
-      {
-        // The super capacitors did not charge so power down and go to sleep
-        Serial.println(F("*** Supercapacitors failed to hold charge in wait_LTC3225 ***"));
-
-        loop_step = zzz;
-      }
-  
-      break; // End of case wait_LTC3225
-      
-    // ************************************************************************************************
-    // Enable the 9603N and attempt to send a message
-    case send_9603:
-    
-      // Enable power for the 9603N
-      Serial.println(F("Enabling 9603N power..."));
-      digitalWrite(iridiumPwrEN, HIGH); // Enable Iridium Power
-      delay(1000);
-
-      // Relax timing constraints waiting for the supercap to recharge.
-      modem.setPowerProfile(IridiumSBD::USB_POWER_PROFILE);
-
-      // Begin satellite modem operation
-      // Also begin the serial port connected to the satellite modem via IridiumSBD::beginSerialPort
-      Serial.println(F("Starting modem..."));
-      agtErr = modem.begin();
-
-      // Check if the modem started correctly
-      if (agtErr != ISBD_SUCCESS)
-      {
-        // If the modem failed to start, disable it and go to sleep
-        Serial.print(F("*** modem.begin failed with error "));
-        Serial.print(agtErr);
-        Serial.println(F(" ***"));
-        loop_step = zzz;
-      }
-
-      else
-      {
-        // The modem started OK so let's try to send the message
-        char outBuffer[120]; // Use outBuffer to store the message. Always try to keep message short to avoid wasting credits
-
-        // Apollo3 v2.1 does not support printf or sprintf correctly. We need to manually add preceeding zeros
-        // and convert floats to strings
-
-        // Convert the floating point values into strings
-        char latStr[15]; // latitude string
-        ftoa(agtLatitude,latStr,6,15);
-        char lonStr[15]; // longitude string
-        ftoa(agtLongitude,lonStr,6,15);
-        char altStr[15]; // altitude string
-        ftoa(agtAltitude,altStr,2,15);
-        char vbatStr[6]; // battery voltage string
-        ftoa(agtVbat,vbatStr,2,6);
-        char speedStr[8]; // speed string
-        ftoa(agtSpeed,speedStr,2,8);
-        char pressureStr[9]; // pressure string
-        ftoa(agtPascals,pressureStr,0,9);
-        char temperatureStr[10]; // temperature string
-        ftoa(agtTempC,temperatureStr,1,10);
-
-        // Convert the date and time into strings
-        char gnssDay[3];
-        char gnssMonth[3];
-        if (agtDay < 10)
-          sprintf(gnssDay, "0%d", agtDay);
-        else
-          sprintf(gnssDay, "%d", agtDay);
-        if (agtMonth < 10)
-          sprintf(gnssMonth, "0%d", agtMonth);
-        else
-          sprintf(gnssMonth, "%d", agtMonth);
-      
-        char gnssHour[3];
-        char gnssMin[3];
-        char gnssSec[3];
-        if (agtHour < 10)
-          sprintf(gnssHour, "0%d", agtHour);
-        else
-          sprintf(gnssHour, "%d", agtHour);
-        if (agtMinute < 10)
-          sprintf(gnssMin, "0%d", agtMinute);
-        else
-          sprintf(gnssMin, "%d", agtMinute);
-        if (agtSecond < 10)
-          sprintf(gnssSec, "0%d", agtSecond);
-        else
-          sprintf(gnssSec, "%d", agtSecond);
-
-        char destStr[8];
-        if (myTrackerSettings.DEST < 10)
-          sprintf(destStr, "000000%d", myTrackerSettings.DEST);
-        else if (myTrackerSettings.DEST < 100)
-          sprintf(destStr, "00000%d", myTrackerSettings.DEST);
-        else if (myTrackerSettings.DEST < 1000)
-          sprintf(destStr, "0000%d", myTrackerSettings.DEST);
-        else if (myTrackerSettings.DEST < 10000)
-          sprintf(destStr, "000%d", myTrackerSettings.DEST);
-        else if (myTrackerSettings.DEST < 100000)
-          sprintf(destStr, "00%d", myTrackerSettings.DEST);
-        else if (myTrackerSettings.DEST < 1000000)
-          sprintf(destStr, "0%d", myTrackerSettings.DEST);
-        else
-          sprintf(destStr, "%d", myTrackerSettings.DEST);
-        
-        char sourceStr[8];
-        if (myTrackerSettings.SOURCE < 10)
-          sprintf(sourceStr, "000000%d", myTrackerSettings.SOURCE);
-        else if (myTrackerSettings.SOURCE < 100)
-          sprintf(sourceStr, "00000%d", myTrackerSettings.SOURCE);
-        else if (myTrackerSettings.SOURCE < 1000)
-          sprintf(sourceStr, "0000%d", myTrackerSettings.SOURCE);
-        else if (myTrackerSettings.SOURCE < 10000)
-          sprintf(sourceStr, "000%d", myTrackerSettings.SOURCE);
-        else if (myTrackerSettings.SOURCE < 100000)
-          sprintf(sourceStr, "00%d", myTrackerSettings.SOURCE);
-        else if (myTrackerSettings.SOURCE < 1000000)
-          sprintf(sourceStr, "0%d", myTrackerSettings.SOURCE);
-        else
-          sprintf(sourceStr, "%d", myTrackerSettings.SOURCE);
-        
-        // Assemble the message using sprintf
-        if (myTrackerSettings.DEST > 0) {
-          sprintf(outBuffer, "RB%s,%s,%s,%d,%d,%s,%s,%d,%s,RB%s", 
-            latStr, lonStr, agtPDOP, agtSatellites, pressureStr, temperatureStr, iterationCounter, IridiumMessage);
-        }
-        else {
-          sprintf(outBuffer, "%s,%s,%d,%d,%s,%s,%d, %s", 
-            latStr, lonStr, agtPDOP, agtSatellites, pressureStr, temperatureStr, iterationCounter, IridiumMessage);
-        }
-
-        // Send the message
-        Serial.print(F("Transmitting message '"));
-        Serial.print(outBuffer);
-        Serial.println(F("'"));
-
-        uint8_t mt_buffer[100]; // Buffer to store Mobile Terminated SBD message
-        size_t mtBufferSize = sizeof(mt_buffer); // Size of MT buffer
-
-#ifndef noTX
-        agtErr = modem.sendSBDText(outBuffer); // This could take many seconds to complete and will call ISBDCallback() periodically
-#else
-        agtErr = ISBD_SUCCESS; // Fake success
-        mtBufferSize = 0;
-#endif
-
-        // Check if the message sent OK
-        if (agtErr != ISBD_SUCCESS)
-        {
-          Serial.print(F("Transmission failed with error code "));
-          Serial.println(agtErr);
-#ifndef noLED
-          // Turn on LED to indicate failed send
-          digitalWrite(LED, HIGH);
-#endif
-        }
-        else
-        {
-          Serial.println(F(">>> Message sent! <<<"));
-#ifndef noLED
-          // Flash LED rapidly to indicate successful send
-          for (int i = 0; i < 10; i++)
-          {
-            digitalWrite(LED, HIGH);
-            delay(100);
-            digitalWrite(LED, LOW);
-            delay(100);
-          }
-#endif
-          if (mtBufferSize > 0) { // Was an MT message received?
-            // Check message content
-            mt_buffer[mtBufferSize] = 0; // Make sure message is NULL terminated
-            String mt_str = String((char *)mt_buffer); // Convert message into a String
-            Serial.print(F("Received a MT message: ")); Serial.println(mt_str);
-
-            // Check if the message contains a correctly formatted interval: "[INTERVAL=nnn]"
-            int new_interval = 0;
-            int starts_at = -1;
-            int ends_at = -1;
-            starts_at = mt_str.indexOf("[INTERVAL="); // See is message contains "[INTERVAL="
-            if (starts_at >= 0) { // If it does:
-              ends_at = mt_str.indexOf("]", starts_at); // Find the following "]"
-              if (ends_at > starts_at) { // If the message contains both "[INTERVAL=" and "]"
-                String new_interval_str = mt_str.substring((starts_at + 10),ends_at); // Extract the value after the "="
-                Serial.print(F("Extracted an INTERVAL of: ")); Serial.println(new_interval_str);
-                new_interval = (int)new_interval_str.toInt(); // Convert it to int
-              }
-            }
-            if ((new_interval > 0) and (new_interval <= 1440)) { // Check new interval is valid
-              Serial.print(F("New INTERVAL received. Setting TXINT to "));
-              Serial.print(new_interval);
-              Serial.println(F(" minutes."));
-              myTrackerSettings.TXINT = new_interval; // Update the transmit interval
-              putTrackerSettings(&myTrackerSettings); // Update flash memory
-            }
-
-            // Check if the message contains a correctly formatted RBSOURCE: "[RBSOURCE=nnnnn]"
-            int new_source = -1;
-            starts_at = -1;
-            ends_at = -1;
-            starts_at = mt_str.indexOf("[RBSOURCE="); // See is message contains "[RBSOURCE="
-            if (starts_at >= 0) { // If it does:
-              ends_at = mt_str.indexOf("]", starts_at); // Find the following "]"
-              if (ends_at > starts_at) { // If the message contains both "[RBSOURCE=" and "]"
-                String new_source_str = mt_str.substring((starts_at + 10),ends_at); // Extract the value after the "="
-                Serial.print(F("Extracted an RBSOURCE of: ")); Serial.println(new_source_str);
-                new_source = (int)new_source_str.toInt(); // Convert it to int
-              }
-            }
-            // toInt returns zero if the conversion fails, so it is not possible to distinguish between a source of zero and an invalid value!
-            // An invalid value will cause RBSOURCE to be set to zero
-            if (new_source >= 0) { // If new_source was received
-              Serial.print(F("New RBSOURCE received. Setting SOURCE to "));
-              Serial.println(new_source);
-              myTrackerSettings.SOURCE = new_source; // Update the source RockBLOCK serial number
-              putTrackerSettings(&myTrackerSettings); // Update flash memory
-            }
-
-            // Check if the message contains a correctly formatted RBDESTINATION: "[RBDESTINATION=nnnnn]"
-            int new_destination = -1;
-            starts_at = -1;
-            ends_at = -1;
-            starts_at = mt_str.indexOf("[RBDESTINATION="); // See is message contains "[RBDESTINATION="
-            if (starts_at >= 0) { // If it does:
-              ends_at = mt_str.indexOf("]", starts_at); // Find the following "]"
-              if (ends_at > starts_at) { // If the message contains both "[RBDESTINATION=" and "]"
-                String new_destination_str = mt_str.substring((starts_at + 15),ends_at); // Extract the value after the "="
-                Serial.print(F("Extracted an RBDESTINATION of: ")); Serial.println(new_destination_str);
-                new_destination = (int)new_destination_str.toInt(); // Convert it to int
-              }
-            }
-            // toInt returns zero if the conversion fails, so it is not possible to distinguish between a destination of zero and an invalid value!
-            // An invalid value will cause RBDESTINATION to be set to zero
-            if (new_destination >= 0) { // If new_destination was received
-              Serial.print(F("New RBDESTINATION received. Setting DEST to "));
-              Serial.println(new_destination);
-              myTrackerSettings.DEST = new_destination; // Update the destination RockBLOCK serial number
-              putTrackerSettings(&myTrackerSettings); // Update flash memory
-            }
-          }
-        }
-
-        // Clear the Mobile Originated message buffer
-        Serial.println(F("Clearing the MO buffer."));
-        agtErr = modem.clearBuffers(ISBD_CLEAR_MO); // Clear MO buffer
-        if (agtErr != ISBD_SUCCESS)
-        {
-          Serial.print(F("*** modem.clearBuffers failed with error "));
-          Serial.print(agtErr);
-          Serial.println(F(" ***"));
-        }
-
-        // Power down the modem
-        // Also disable the Serial1 RX pin via IridiumSBD::endSerialPort
-        Serial.println(F("Putting the 9603N to sleep."));
-        agtErr = modem.sleep();
-        if (agtErr != ISBD_SUCCESS)
-        {
-          Serial.print(F("*** modem.sleep failed with error "));
-          Serial.print(agtErr);
-          Serial.println(F(" ***"));
-        }
-
-        iterationCounter = iterationCounter + 1; // Increment the iterationCounter
-  
-        loop_step = zzz; // Now go to sleep
-      }
-
-      break; // End of case start_9603
       
       
     // ************************************************************************************************
