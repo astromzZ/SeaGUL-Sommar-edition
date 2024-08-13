@@ -49,6 +49,22 @@
 
 */
 
+
+// Define how often messages are sent in MINUTES (max 1440)
+// This is the _quickest_ messages will be sent. Could be much slower than this depending on:
+// capacitor charge time; gnss fix time; Iridium timeout; etc.
+// The default value will be overwritten with the one stored in Flash EEPROM - if one exists
+// The value can be changed via a Mobile Terminated message: [INTERVAL=nnn]
+#define DEF_TXINT 5 // DEFault TX INTerval (Minutes)
+
+// Both the source and destination RockBLOCK serial numbers are stored in flash.
+// These can be changed via MT message too: [RBSOURCE=nnnnn] and [RBDESTINATION=nnnnn]
+// Set RBDESTINATION to zero to disable message forwarding
+// The default values are:
+#define DEF_SOURCE    0 // DEFault SOURCE RockBLOCK serial number (the serial number of the 9603N on this tracker)
+#define DEF_DEST      0 // DEFault DESTination RockBLOCK (the serial number of the desination RockBLOCK)
+
+
 // Artemis Tracker pin definitions
 #define spiCS1              4  // D4 can be used as an SPI chip select or as a general purpose IO pin
 #define geofencePin         10 // Input for the ZOE-M8Q's PIO14 (geofence) pin
@@ -72,6 +88,14 @@
 //#define noTX // Uncomment this line to disable the Iridium SBD transmit if you want to test the code without using message credits
 
 // We use Serial1 to communicate with the Iridium modem. Serial1 on the ATP uses pin 24 for TX and 25 for RX. AGT uses the same pins.
+
+#include <EEPROM.h> // Needed for EEPROM
+
+#include "Tracker_EEPROM_Storage.h"
+
+
+trackerSettings myTrackerSettings; // Define storage for the tracker settings
+
 
 #include <IridiumSBD.h> //http://librarymanager/All#IridiumSBDI2C
 #define DIAGNOSTICS false // Change this to true to see IridiumSBD diagnostics
@@ -97,7 +121,7 @@ MS8607 barometricSensor; //Create an instance of the MS8607 object
 // Define how often messages are sent in SECONDS
 // This is the _quickest_ messages will be sent. Could be much slower than this depending on:
 // capacitor charge time; gnss fix time; Iridium timeout; etc.
-unsigned long INTERVAL = 15*60; // 15 minutes
+unsigned long INTERVAL = 0.5*60; // 15 minutes
 
 // Use this to keep a count of the second alarms from the rtc
 volatile unsigned long secondsCount = 0;
@@ -321,6 +345,42 @@ void clearSerialBuffer(SoftwareSerial &serial) {
   while (serial.available() > 0) {
     serial.read();
   }
+}
+
+void setAGTWirePullups(uint32_t i2cBusPullUps)
+{
+  //Change SCL and SDA pull-ups manually using pin_config
+  am_hal_gpio_pincfg_t sclPinCfg = g_AM_BSP_GPIO_IOM1_SCL;
+  am_hal_gpio_pincfg_t sdaPinCfg = g_AM_BSP_GPIO_IOM1_SDA;
+
+  if (i2cBusPullUps == 0)
+  {
+    sclPinCfg.ePullup = AM_HAL_GPIO_PIN_PULLUP_NONE; // No pull-ups
+    sdaPinCfg.ePullup = AM_HAL_GPIO_PIN_PULLUP_NONE;
+  }
+  else if (i2cBusPullUps == 1)
+  {
+    sclPinCfg.ePullup = AM_HAL_GPIO_PIN_PULLUP_1_5K; // Use 1K5 pull-ups
+    sdaPinCfg.ePullup = AM_HAL_GPIO_PIN_PULLUP_1_5K;
+  }
+  else if (i2cBusPullUps == 6)
+  {
+    sclPinCfg.ePullup = AM_HAL_GPIO_PIN_PULLUP_6K; // Use 6K pull-ups
+    sdaPinCfg.ePullup = AM_HAL_GPIO_PIN_PULLUP_6K;
+  }
+  else if (i2cBusPullUps == 12)
+  {
+    sclPinCfg.ePullup = AM_HAL_GPIO_PIN_PULLUP_12K; // Use 12K pull-ups
+    sdaPinCfg.ePullup = AM_HAL_GPIO_PIN_PULLUP_12K;
+  }
+  else
+  {
+    sclPinCfg.ePullup = AM_HAL_GPIO_PIN_PULLUP_24K; // Use 24K pull-ups
+    sdaPinCfg.ePullup = AM_HAL_GPIO_PIN_PULLUP_24K;
+  }
+
+  pin_config(PinName(PIN_AGTWIRE_SCL), sclPinCfg);
+  pin_config(PinName(PIN_AGTWIRE_SDA), sdaPinCfg);
 }
 
 void start_GNSS () {
@@ -563,6 +623,8 @@ void send_9603() {
   {
     // The modem started OK so let's try to send the message
     char outBuffer[120]; // Use outBuffer to store the message. Always try to keep message short to avoid wasting credits
+    char iridiumMessageBuffer[120]; // Use iridiumMessageBuffer to store the message. Always try to keep message short to avoid wasting credits
+    IridiumMessage.toCharArray(iridiumMessageBuffer, sizeof(iridiumMessageBuffer)); // Convert to C-style string
 
     // Apollo3 v2.1 does not support printf or sprintf correctly. We need to manually add preceeding zeros
     // and convert floats to strings
@@ -645,12 +707,12 @@ void send_9603() {
     
     // Assemble the message using sprintf
     if (myTrackerSettings.DEST > 0) {
-      sprintf(outBuffer, "RB%s,%s,%s,%d,%d,%s,%s,%d,%s,RB%s", 
-        latStr, lonStr, agtPDOP, agtSatellites, pressureStr, temperatureStr, iterationCounter, IridiumMessage);
+      sprintf(outBuffer, "RB%s,%s,%s,%s,RB%s", 
+        latStr, lonStr, iridiumMessageBuffer);
     }
     else {
-      sprintf(outBuffer, "%s,%s,%d,%d,%s,%s,%d, %s", 
-        latStr, lonStr, agtPDOP, agtSatellites, pressureStr, temperatureStr, iterationCounter, IridiumMessage);
+      sprintf(outBuffer, "%s,%s,%s", 
+        latStr, lonStr, iridiumMessageBuffer);
     }
 
     // Send the message
@@ -868,6 +930,9 @@ void setup()
   digitalWrite(busVoltageMonEN, LOW); // Set it low to disable the measurementesolsave power
   analogReadResolution(14); //Set resolution to 14 bit
 
+  // Adjust Iridium timeout settings
+  modem.adjustStartupTimeout(1000); // Set the startup timeout to 1000 seconds
+
   // Initialise the globals
   iterationCounter = 0; // Make sure iterationCounter is set to zero (indicating a reset)
   loop_step = loop_init; // Make sure loop_step is set to loop_init
@@ -969,10 +1034,12 @@ void loop()
       pickupFlag = true; // Set the pickup flag
       INTERVAL = 60*60; // 1 hour
       if (dropweight) {
-        IridiumMessage = "dropweight, awaiting pickup"; // Send that the dropweight is released, awaiting pickup
+        IridiumMessage = "dropweight, pickup"; // Send that the dropweight is released, awaiting pickup
+        Serial.println(IridiumMessage);
       }
       else {
-        IridiumMessage = "awaiting pickup"; // Send that the glider is awaiting pickup
+        IridiumMessage = "pickup"; // Send that the glider is awaiting pickup
+        Serial.println(IridiumMessage);
       }
       start_GNSS();
       if (gnssStarted) {
@@ -980,8 +1047,16 @@ void loop()
         gnssStarted = false;
       }
       if (gnssRead) {
-        send_9603();
+        start_LTC3225();
         gnssRead = false;
+      }
+      if (superCapStarted) {
+        wait_LTC3225();
+        superCapStarted = false;
+      }
+      if (superCapCharged) {
+        receive_9603();
+        superCapCharged = false;
       }
 
       loop_step = zzz;
@@ -1083,6 +1158,7 @@ void loop()
           if (messageReceived) {
             mySerial.println(receivedMessage);
             messageReceived = false;
+            receivedMessage = "";
           }
           else (mySerial.println("No message received"));
           loop_step = zzz;
@@ -1249,3 +1325,274 @@ void loop()
     
   } // End of switch (loop_step)
 } // End of loop()
+
+// IridiumSBD Callbacks
+#if DIAGNOSTICS
+void ISBDConsoleCallback(IridiumSBD *device, char c)
+{
+  Serial.write(c);
+}
+void ISBDDiagsCallback(IridiumSBD *device, char c)
+{
+  Serial.write(c);
+}
+#endif
+
+static uint64_t divu64_10(uint64_t ui64Val)
+{
+    uint64_t q64, r64;
+    uint32_t q32, r32, ui32Val;
+
+    //
+    // If a 32-bit value, use the more optimal 32-bit routine.
+    //
+    if ( ui64Val >> 32 )
+    {
+        q64 = (ui64Val>>1) + (ui64Val>>2);
+        q64 += (q64 >> 4);
+        q64 += (q64 >> 8);
+        q64 += (q64 >> 16);
+        q64 += (q64 >> 32);
+        q64 >>= 3;
+        r64 = ui64Val - q64*10;
+        return q64 + ((r64 + 6) >> 4);
+    }
+    else
+    {
+        ui32Val = (uint32_t)(ui64Val & 0xffffffff);
+        q32 = (ui32Val>>1) + (ui32Val>>2);
+        q32 += (q32 >> 4);
+        q32 += (q32 >> 8);
+        q32 += (q32 >> 16);
+        q32 >>= 3;
+        r32 = ui32Val - q32*10;
+        return (uint64_t)(q32 + ((r32 + 6) >> 4));
+    }
+}
+
+//*****************************************************************************
+//
+// Converts ui64Val to a string.
+// Note: pcBuf[] must be sized for a minimum of 21 characters.
+//
+// Returns the number of decimal digits in the string.
+//
+// NOTE: If pcBuf is NULL, will compute a return ui64Val only (no chars
+// written).
+//
+//*****************************************************************************
+static int uint64_to_str(uint64_t ui64Val, char *pcBuf)
+{
+    char tbuf[25];
+    int ix = 0, iNumDig = 0;
+    unsigned uMod;
+    uint64_t u64Tmp;
+
+    do
+    {
+        //
+        // Divide by 10
+        //
+        u64Tmp = divu64_10(ui64Val);
+
+        //
+        // Get modulus
+        //
+        uMod = ui64Val - (u64Tmp * 10);
+
+        tbuf[ix++] = uMod + '0';
+        ui64Val = u64Tmp;
+    } while ( ui64Val );
+
+    //
+    // Save the total number of digits
+    //
+    iNumDig = ix;
+
+    //
+    // Now, reverse the buffer when saving to the caller's buffer.
+    //
+    if ( pcBuf )
+    {
+        while ( ix-- )
+        {
+            *pcBuf++ = tbuf[ix];
+        }
+
+        //
+        // Terminate the caller's buffer
+        //
+        *pcBuf = 0x00;
+    }
+
+    return iNumDig;
+}
+
+#define OLA_FTOA_ERR_VAL_TOO_SMALL   -1
+#define OLA_FTOA_ERR_VAL_TOO_LARGE   -2
+#define OLA_FTOA_ERR_BUFSIZE         -3
+
+typedef union
+{
+    int32_t I32;
+    float F;
+} ola_i32fl_t;
+
+static int ftoa(float fValue, char *pcBuf, int iPrecision, int bufSize)
+{
+    ola_i32fl_t unFloatValue;
+    int iExp2, iBufSize;
+    int32_t i32Significand, i32IntPart, i32FracPart;
+    char *pcBufInitial, *pcBuftmp;
+
+    iBufSize = bufSize; // *(uint32_t*)pcBuf;
+    if (iBufSize < 4)
+    {
+        return OLA_FTOA_ERR_BUFSIZE;
+    }
+
+    if (fValue == 0.0f)
+    {
+        // "0.0"
+        *(uint32_t*)pcBuf = 0x00 << 24 | ('0' << 16) | ('.' << 8) | ('0' << 0);
+        return 3;
+    }
+
+    pcBufInitial = pcBuf;
+
+    unFloatValue.F = fValue;
+
+    iExp2 = ((unFloatValue.I32 >> 23) & 0x000000FF) - 127;
+    i32Significand = (unFloatValue.I32 & 0x00FFFFFF) | 0x00800000;
+    i32FracPart = 0;
+    i32IntPart = 0;
+
+    if (iExp2 >= 31)
+    {
+        return OLA_FTOA_ERR_VAL_TOO_LARGE;
+    }
+    else if (iExp2 < -23)
+    {
+        return OLA_FTOA_ERR_VAL_TOO_SMALL;
+    }
+    else if (iExp2 >= 23)
+    {
+        i32IntPart = i32Significand << (iExp2 - 23);
+    }
+    else if (iExp2 >= 0)
+    {
+        i32IntPart = i32Significand >> (23 - iExp2);
+        i32FracPart = (i32Significand << (iExp2 + 1)) & 0x00FFFFFF;
+    }
+    else // if (iExp2 < 0)
+    {
+        i32FracPart = (i32Significand & 0x00FFFFFF) >> -(iExp2 + 1);
+    }
+
+    if (unFloatValue.I32 < 0)
+    {
+        *pcBuf++ = '-';
+    }
+
+    if (i32IntPart == 0)
+    {
+        *pcBuf++ = '0';
+    }
+    else
+    {
+        if (i32IntPart > 0)
+        {
+            uint64_to_str(i32IntPart, pcBuf);
+        }
+        else
+        {
+            *pcBuf++ = '-';
+            uint64_to_str(-i32IntPart, pcBuf);
+        }
+        while (*pcBuf)    // Get to end of new string
+        {
+            pcBuf++;
+        }
+    }
+
+    //
+    // Now, begin the fractional part
+    //
+    *pcBuf++ = '.';
+
+    if (i32FracPart == 0)
+    {
+        *pcBuf++ = '0';
+    }
+    else
+    {
+        int jx, iMax;
+
+        iMax = iBufSize - (pcBuf - pcBufInitial) - 1;
+        iMax = (iMax > iPrecision) ? iPrecision : iMax;
+
+        for (jx = 0; jx < iMax; jx++)
+        {
+            i32FracPart *= 10;
+            *pcBuf++ = (i32FracPart >> 24) + '0';
+            i32FracPart &= 0x00FFFFFF;
+        }
+
+        //
+        // Per the printf spec, the number of digits printed to the right of the
+        // decimal point (i.e. iPrecision) should be rounded.
+        // Some examples:
+        // Value        iPrecision          Formatted value
+        // 1.36399      Unspecified (6)     1.363990
+        // 1.36399      3                   1.364
+        // 1.36399      4                   1.3640
+        // 1.36399      5                   1.36399
+        // 1.363994     Unspecified (6)     1.363994
+        // 1.363994     3                   1.364
+        // 1.363994     4                   1.3640
+        // 1.363994     5                   1.36399
+        // 1.363995     Unspecified (6)     1.363995
+        // 1.363995     3                   1.364
+        // 1.363995     4                   1.3640
+        // 1.363995     5                   1.36400
+        // 1.996        Unspecified (6)     1.996000
+        // 1.996        2                   2.00
+        // 1.996        3                   1.996
+        // 1.996        4                   1.9960
+        //
+        // To determine whether to round up, we'll look at what the next
+        // decimal value would have been.
+        //
+        if ( ((i32FracPart * 10) >> 24) >= 5 )
+        {
+            //
+            // Yes, we need to round up.
+            // Go back through the string and make adjustments as necessary.
+            //
+            pcBuftmp = pcBuf - 1;
+            while ( pcBuftmp >= pcBufInitial )
+            {
+                if ( *pcBuftmp == '.' )
+                {
+                }
+                else if ( *pcBuftmp == '9' )
+                {
+                    *pcBuftmp = '0';
+                }
+                else
+                {
+                    *pcBuftmp += 1;
+                    break;
+                }
+                pcBuftmp--;
+            }
+        }
+    }
+
+    //
+    // Terminate the string and we're done
+    //
+    *pcBuf = 0x00;
+
+    return (pcBuf - pcBufInitial);
+} // ftoa()
