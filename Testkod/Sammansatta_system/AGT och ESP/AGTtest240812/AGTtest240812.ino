@@ -121,7 +121,7 @@ MS8607 barometricSensor; //Create an instance of the MS8607 object
 // Define how often messages are sent in SECONDS
 // This is the _quickest_ messages will be sent. Could be much slower than this depending on:
 // capacitor charge time; gnss fix time; Iridium timeout; etc.
-unsigned long INTERVAL = 0.5*60; // 15 minutes
+unsigned long INTERVAL = 15*60; // 5 minutes
 
 // Use this to keep a count of the second alarms from the rtc
 volatile unsigned long secondsCount = 0;
@@ -877,8 +877,8 @@ void setup()
   Serial.begin(115200);
   mySerial.begin(9600);
 
-  while (!Serial) // Wait for the user to open the serial monitor
-    ;
+  // while (!Serial) // Wait for the user to open the serial monitor
+  //   ;
   delay(100);
   Serial.println();
   Serial.println();
@@ -895,8 +895,10 @@ void setup()
   Serial.println(F("and that the line ending is set to Newline."));
   Serial.println(F("Then click Send to start the example."));
   Serial.println();
-  while(Serial.available() == 0)
-    ;
+
+  // while(Serial.available() == 0)
+  //   ;
+  delay(1000*30); // Wait for 30 seconds to allow the user to open the serial monitor
    
   pinMode(LED, OUTPUT); // Make the LED pin an output
 
