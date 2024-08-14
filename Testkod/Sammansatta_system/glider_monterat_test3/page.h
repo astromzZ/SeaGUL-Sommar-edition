@@ -95,11 +95,11 @@ const char page_html[] PROGMEM = R"rawliteral(
     .initiate-dive:hover {
       background-color: #1c86ee;
     }
-    .calibrate {
+    .surface {
       background-color: #008000;  /* Green button */
       color: white;
     }
-    .calibrate:hover {
+    .surface:hover {
       background-color: #006400;
     }
     .idle-button {
@@ -171,7 +171,7 @@ const char page_html[] PROGMEM = R"rawliteral(
       background-color: #1e90ff;
       color: white;
     }
-    .light-mode .calibrate {
+    .light-mode .surface {
       background-color: #008000;
       color: white;
     }
@@ -362,7 +362,7 @@ const char page_html[] PROGMEM = R"rawliteral(
       <div class="button-container">
         <button class="button idle-button" onclick="enterIdle()">Idle</button>
         <button class="button initiate-dive" onclick="enterDive()">Initiate Dive</button>
-        <button class="button calibrate" onclick="enterCalibration()">Calibrate</button>
+        <button class="button surface" onclick="enterSurface()">Surface</button>
         <button class="button test-button" onclick="enterSetup()">Setup</button>
         <button class="button test-button" onclick="dropweight()">Dropweight</button>
       </div>
@@ -595,14 +595,14 @@ const char page_html[] PROGMEM = R"rawliteral(
         .catch(error => console.error('Error:', error));
     }
 
-    function enterCalibration() {
-      sendMessage('Calibrate');
-      fetch('/calibrate', { method: 'GET' })
+    function enterSurface() {
+      sendMessage('Surface');
+      fetch('/surface', { method: 'GET' })
         .then(response => {
           if (!response.ok) {
             throw new Error('Network response was not ok');
           }
-          console.log('Calibration started');
+          console.log('surface started');
         })
         .catch(error => console.error('Error:', error));
     }

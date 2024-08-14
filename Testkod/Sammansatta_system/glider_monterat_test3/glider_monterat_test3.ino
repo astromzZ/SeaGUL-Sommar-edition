@@ -249,14 +249,14 @@ void handleInitiateDive() {
   server.send(200, "text/plain", "Dive Initiated");
 }
 
-// Handle when calibrate button is pressed
-void handleCalibrate() {
+// Handle when surface button is pressed
+void handleSurface() {
   // isIdle = false;
   // isDiving = false;
   // isCalibrating = true;
   gliderState = Calibrating;
-  Serial.println("Calibration Started");
-  server.send(200, "text/plain", "Calibration Started");
+  Serial.println("Surface Started");
+  server.send(200, "text/plain", "Surface Started");
 }
 
 // Handle when rotate left button is pressed
@@ -567,7 +567,7 @@ void setup() {
     server.on("/data", handleData);
     server.on("/idle", handleIdle);
     server.on("/initiateDive", handleInitiateDive);
-    server.on("/calibrate", handleCalibrate);
+    server.on("/surface", handleSurface);
     server.on("/rotateLeft", handleRotateLeft);
     server.on("/rotateRight", handleRotateRight);
     server.on("/moveForward", handleMoveForward);
