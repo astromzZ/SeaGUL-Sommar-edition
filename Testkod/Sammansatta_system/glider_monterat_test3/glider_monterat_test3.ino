@@ -1304,6 +1304,11 @@ void glidercontrol(void* pvParameters) {
           //pitchSP = -20; // Setpoint for pitch, we want the antenna to be above the water.
           
           rollSP = 0; // Setpoint for roll
+          if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
+            //moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
+            moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
+          }
+
           //gliderState = Idle;
           //Check if the dropweight has been released. If not, buissness as usual.
           if (dropweightReleased) {
@@ -1350,12 +1355,6 @@ void glidercontrol(void* pvParameters) {
 
 
           //Await command to dive again. 
-
-          if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
-            //moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
-            
-            moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
-          }
 
           //When command is given enter the Diving state and reset the number of dives
           if (Serial.available() > 0) {
