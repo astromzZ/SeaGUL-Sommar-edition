@@ -165,6 +165,8 @@ volatile bool messageSent = false;
 // This flag is used to check if the message was received correctly
 volatile bool messageReceived = false;
 
+int signalQuality = -1; // Initiate signal quality to -1
+
 // iterationCounter is incremented each time a transmission is attempted.
 // It helps keep track of whether messages are being sent successfully.
 // It also indicates if the tracker has been reset (the count will go back to zero).
@@ -193,7 +195,7 @@ bool   agtPGOOD = false; // Flag to indicate if LTC3225 PGOOD is HIGH
 int    agtErr; // Error value returned by IridiumSBD.begin
 String message; // The message from the ESP32
 String IridiumMessage; // The message to be sent via Iridium
-String receivedMessage; // The message received from Iridium
+String receivedMessageString; // The message received from Iridium
 
 #define VBAT_LOW 2.8 // Minimum voltage for LTC3225
 
@@ -773,103 +775,97 @@ void send_9603() {
 }
 
 void receive_9603() {
-    uint8_t mt_buffer[200]; // Buffer to store received message
-    size_t mtBufferSize = sizeof(mt_buffer); // Size of MT buffer
-    int err = ISBD_SUCCESS;
-    bool ring = false;
-    int loop_count = 0;
+  uint8_t mt_Buffer[200]; // Buffer to store received message
+  size_t mtBufferSize = sizeof(mt_Buffer); // Size of MT buffer
 
-    // Enable power for the 9603N
-    Serial.println(F("Enabling 9603N power..."));
-    digitalWrite(iridiumPwrEN, HIGH); // Enable Iridium Power
-    delay(1000);
+  // Enable power for the 9603N
+  Serial.println(F("Enabling 9603N power..."));
+  digitalWrite(iridiumPwrEN, HIGH); // Enable Iridium Power
+  delay(1000);
 
-    // Set up power profile
-    modem.setPowerProfile(IridiumSBD::USB_POWER_PROFILE);
+  // Relax timing constraints waiting for the supercap to recharge.
+  modem.setPowerProfile(IridiumSBD::USB_POWER_PROFILE);
 
-    // Begin satellite modem operation
-    Serial.println(F("Starting modem..."));
-    err = modem.begin();
-    if (err != ISBD_SUCCESS) {
-        Serial.print(F("modem.begin failed with error "));
-        Serial.println(err);
-        if (err == ISBD_NO_MODEM_DETECTED) {
-            Serial.println(F("No modem detected: check wiring."));
-        }
-        return;
+  // Begin satellite modem operation
+  // Also begin the serial port connected to the satellite modem via IridiumSBD::beginSerialPort
+  Serial.println(F("Starting modem..."));
+  agtErr = modem.begin();
+
+  // Check if the modem started correctly
+  if (agtErr != ISBD_SUCCESS)
+  {
+    // If the modem failed to start, disable it and go to sleep
+    Serial.print(F("*** modem.begin failed with error "));
+    Serial.print(agtErr);
+    Serial.println(F(" ***"));
+  }
+  else
+  {
+    
+    
+    // Send the message
+    Serial.print(F("Transmitting NULL message to get received message"));
+    
+
+#ifndef noTX
+    agtErr = modem.sendReceiveSBDText(NULL, mt_Buffer, mtBufferSize); // This could take many seconds to complete and will call ISBDCallback() periodically
+#else
+    agtErr = ISBD_SUCCESS; // Fake success
+    mtBufferSize = 0;
+#endif
+
+    // Check if the message sent OK
+    if (agtErr != ISBD_SUCCESS)
+    {
+      Serial.print(F("Transmission failed with error code "));
+      Serial.println(agtErr);
+#ifndef noLED
+      // Turn on LED to indicate failed send
+      digitalWrite(LED, HIGH);
+#endif
     }
+    else
+    {
+      Serial.println(F(">>> Message sent! <<<"));
+      messageReceived = true;
+#ifndef noLED
+      // Flash LED rapidly to indicate successful send
+      for (int i = 0; i < 10; i++)
+      {
+        digitalWrite(LED, HIGH);
+        delay(100);
+        digitalWrite(LED, LOW);
+        delay(100);
+      }
+#endif
+      }
+  }
+  if (mtBufferSize > 0) { // Was an MT message received?
+    // Check message content
+    mt_Buffer[mtBufferSize] = 0; // Make sure message is NULL terminated
+    String mt_str = String((char *)mt_Buffer); // Convert message into a String
+    Serial.print(F("Received a MT message: ")); Serial.println(mt_str);
+    receivedMessageString = mt_str; // Save the message for later processing
 
-    // Wait up to 10 minutes (600 seconds) for a ring indicator (RI) or message
-    Serial.println(F("Waiting for RING..."));
-    while (loop_count < 600) {  // Loop for up to 600 seconds (10 minutes)
-        ring = modem.hasRingAsserted();
+  }
+  // Clear the Mobile Originated message buffer
+  Serial.println(F("Clearing the MO buffer."));
+  agtErr = modem.clearBuffers(ISBD_CLEAR_MO); // Clear MO buffer
+  if (agtErr != ISBD_SUCCESS)
+  {
+    Serial.print(F("*** modem.clearBuffers failed with error "));
+    Serial.print(agtErr);
+    Serial.println(F(" ***"));
+  }
 
-        if (ring || modem.getWaitingMessageCount() > 0) {
-            Serial.println(F("RING asserted or message available. Attempting to read incoming message."));
-            break;
-        }
-
-        delay(1000);  // Wait for 1 second before checking again
-        loop_count++;
-    }
-
-    if (!ring && modem.getWaitingMessageCount() == 0) {
-        Serial.println(F("No RING or messages received within the timeout period."));
-        return;
-    }
-
-    // Clear the Mobile Originated message buffer - just in case it has an old message in it!
-    Serial.println(F("Clearing the MO buffer."));
-    err = modem.clearBuffers(ISBD_CLEAR_MO);
-    if (err != ISBD_SUCCESS) {
-        Serial.print(F("clearBuffers failed with error "));
-        Serial.println(err);
-        return;
-    }
-
-    // Attempt to receive the message
-    err = modem.sendReceiveSBDText(NULL, mt_buffer, mtBufferSize);
-    if (err != ISBD_SUCCESS) {
-        Serial.print(F("sendReceiveSBDText failed with error "));
-        Serial.println(err);
-        return;
-    }
-
-    Serial.println(F("Message received!"));
-    Serial.print(F("Inbound message size is "));
-    Serial.println(mtBufferSize);
-    messageReceived = true;
-
-    for (int i = 0; i < (int)mtBufferSize; ++i) {
-        Serial.print(mt_buffer[i], HEX);
-        if (isprint(mt_buffer[i])) {
-            Serial.print(F("("));
-            Serial.write(mt_buffer[i]);
-            Serial.print(F(")"));
-        }
-        Serial.print(F(" "));
-    }
-    Serial.println();
-
-    Serial.print(F("Messages remaining to be retrieved: "));
-    Serial.println(modem.getWaitingMessageCount());
-
-    // Wait for the RING indicator to clear, if it's still asserted
-    while (modem.hasRingAsserted()) {
-        Serial.println(F("RING is still asserted. Waiting for it to clear..."));
-        delay(1000);
-    }
-
-    Serial.println(F("RING has cleared."));
-
-    // Power down the modem
-    Serial.println(F("Putting the 9603N to sleep."));
-    err = modem.sleep();
-    if (err != ISBD_SUCCESS) {
-        Serial.print(F("*** modem.sleep failed with error "));
-        Serial.print(err);
-        Serial.println(F(" ***"));
-    }
+  // Power down the modem
+  Serial.println(F("Putting the 9603N to sleep."));
+  agtErr = modem.sleep();
+  if (agtErr != ISBD_SUCCESS) {
+      Serial.print(F("*** modem.sleep failed with error "));
+      Serial.print(agtErr);
+      Serial.println(F(" ***"));
+  }
 }
 
 
@@ -1054,11 +1050,21 @@ void loop()
         wait_LTC3225();
         superCapStarted = false;
       }
+      // if (superCapCharged) {
+      //   send_9603();
+      //   superCapCharged = false;
+      // }
       if (superCapCharged) {
         receive_9603();
-        superCapCharged = false;
+        if (messageReceived) {
+          Serial.println(receivedMessageString);
+          messageReceived = false;
+          receivedMessageString = "";
+        }
+        else {
+          Serial.println("No message received");
+        }
       }
-
       loop_step = zzz;
       
       break;
@@ -1113,8 +1119,8 @@ void loop()
           if (messageSent) {
             receive_9603();
             messageSent = false;
-            mySerial.println(receivedMessage);
-            receivedMessage = "";
+            mySerial.println(receivedMessageString);
+            receivedMessageString = "";
           }
           loop_step = zzz;
         }
@@ -1156,9 +1162,9 @@ void loop()
           digitalWrite(D4, LOW); // Set D4 low to signal that the message has been recieved
           clearSerialBuffer(mySerial);
           if (messageReceived) {
-            mySerial.println(receivedMessage);
+            mySerial.println(receivedMessageString);
             messageReceived = false;
-            receivedMessage = "";
+            receivedMessageString = "";
           }
           else (mySerial.println("No message received"));
           loop_step = zzz;
@@ -1596,3 +1602,203 @@ static int ftoa(float fValue, char *pcBuf, int iPrecision, int bufSize)
 
     return (pcBuf - pcBufInitial);
 } // ftoa()
+
+
+// void send_9603() test function, did not work properly just yet.
+
+// void receive_9603() {
+//   uint8_t mt_buffer[200]; // Buffer to store received message
+//   size_t mtBufferSize = sizeof(mt_buffer); // Size of MT buffer
+//   int err = ISBD_SUCCESS;
+//   // bool ring = false;
+//   int loop_count = 0;
+
+//   // Enable power for the 9603N
+//   Serial.println(F("Enabling 9603N power..."));
+//   digitalWrite(iridiumPwrEN, HIGH); // Enable Iridium Power
+//   delay(1000);
+
+//   // Set up power profile
+//   modem.setPowerProfile(IridiumSBD::USB_POWER_PROFILE);
+
+//   // Begin satellite modem operation
+//   Serial.println(F("Starting modem..."));
+//   err = modem.begin();
+//   if (err != ISBD_SUCCESS) {
+//       Serial.print(F("modem.begin failed with error "));
+//       Serial.println(err);
+//       if (err == ISBD_NO_MODEM_DETECTED) {
+//           Serial.println(F("No modem detected: check wiring."));
+//       }
+//       return;
+//   }
+
+//   // Test the signal quality.
+//   // This returns a number between 0 and 5.
+//   // 2 or better is preferred.
+//   err = modem.getSignalQuality(signalQuality);
+//   if (err != ISBD_SUCCESS)
+//   {
+//     Serial.print(F("SignalQuality failed: error "));
+//     Serial.println(err);
+//     return;
+//   }
+
+//   Serial.print(F("On a scale of 0 to 5, signal quality is currently "));
+//   Serial.print(signalQuality);
+//   Serial.println(F("."));
+
+//     // // Wait up to 10 minutes (600 seconds) for a ring indicator (RI) or message
+//     // Serial.println(F("Waiting for RING..."));
+//     // while (loop_count < 600) {  // Loop for up to 600 seconds (10 minutes)
+//     //     ring = modem.hasRingAsserted();
+
+//     //     if (ring || modem.getWaitingMessageCount() > 0) {
+//     //         Serial.println(F("RING asserted or message available. Attempting to read incoming message."));
+//     //         break;
+//     //     }
+
+//     //     delay(1000);  // Wait for 1 second before checking again
+//     //     loop_count++;
+//     // }
+
+//   // Check network available.
+//   Serial.println(F("Checking Network Available (for up to 60 seconds)..."));
+//   int NA = LOW;
+//   // int loop_count = 0;
+//   while ((NA == LOW) && (loop_count < 10*60)) // Loop for up to 10 minutes
+//   {
+//     NA = digitalRead(iridiumNA);
+//     Serial.print(F("Network is "));
+//     if (NA == LOW) Serial.print(F("NOT "));
+//     Serial.println(F("available!"));
+//     if (NA == LOW) Serial.println(F("(This might be because the 9603N has not yet aquired the ring channel.)"));
+//     delay(1000);
+//     loop_count++;
+//   }
+
+//   Serial.println(F("Begin waiting for RING...")); // Wait for RING to be asserted
+//   // This ends the code taken from setup of the AGT Ring example code
+
+//   bool ring = modem.hasRingAsserted();
+//   loop_count = 0;
+//   while (ring == false && loop_count < 10*60) // Loop for up to 10 minutes{
+//   { 
+//     ring = modem.hasRingAsserted();
+//     Serial.println(ring ? "true" : "false");
+//     delay(1000);
+//     loop_count++;
+//   }
+  
+//   if ((ring == true) || (modem.getWaitingMessageCount() > 0) || (err != ISBD_SUCCESS))
+//   {
+//     if (ring == true)
+//       Serial.println(F("RING asserted!  Let's try to read the incoming message."));
+//     else if (modem.getWaitingMessageCount() > 0)
+//       Serial.println(F("Waiting messages available.  Let's try to read them."));
+//     else
+//       Serial.println(F("Let's try again."));
+
+//     // Clear the Mobile Originated message buffer - just in case it has an old message in it!
+//     Serial.println(F("Clearing the MO buffer (just in case)."));
+//     err = modem.clearBuffers(ISBD_CLEAR_MO); // Clear MO buffer
+//     if (err != ISBD_SUCCESS)
+//     {
+//       Serial.print(F("clearBuffers failed: error "));
+//       Serial.println(err);
+//       return;
+//     }
+
+//     // Attempt to receive the message
+//     err = modem.sendReceiveSBDText(NULL, mt_buffer, mtBufferSize);
+//     if (err != ISBD_SUCCESS)
+//     {
+//       Serial.print(F("sendReceiveSBDBinary failed: error "));
+//       Serial.println(err);
+//       return;
+//     }
+
+//     Serial.println(F("Message received!"));
+//     Serial.print(F("Inbound message size is "));
+//     messageReceived = true; // Set the flag to indicate that a message has been received
+//     Serial.println(mtBufferSize);
+
+//     mt_buffer[mtBufferSize] = '\0'; // Ensure null termination
+//     receivedMessageString = String((char*)mt_buffer); // Convert to Arduino String
+//     Serial.println("Received Message: " + receivedMessageString); // Print the received message
+
+//     for (int i=0; i<(int)mtBufferSize; ++i)
+//     {
+//       Serial.print(mt_buffer[i], HEX);
+//       if (isprint(mt_buffer[i]))
+//       {
+//         Serial.print(F("("));
+//         Serial.write(mt_buffer[i]);
+//         Serial.print(F(")"));
+//       }
+//       Serial.print(F(" "));
+//     }
+//     Serial.println();
+//     Serial.print(F("Messages remaining to be retrieved: "));
+//     Serial.println(modem.getWaitingMessageCount());
+
+//   }
+
+//     // if (!ring && modem.getWaitingMessageCount() == 0) {
+//     //     Serial.println(F("No RING or messages received within the timeout period."));
+//     //     return;
+//     // }
+
+//     // // Clear the Mobile Originated message buffer - just in case it has an old message in it!
+//     // Serial.println(F("Clearing the MO buffer."));
+//     // err = modem.clearBuffers(ISBD_CLEAR_MO);
+//     // if (err != ISBD_SUCCESS) {
+//     //     Serial.print(F("clearBuffers failed with error "));
+//     //     Serial.println(err);
+//     //     return;
+//     // }
+
+//     // // Attempt to receive the message
+//     // err = modem.sendReceiveSBDText(NULL, mt_buffer, mtBufferSize);
+//     // if (err != ISBD_SUCCESS) {
+//     //     Serial.print(F("sendReceiveSBDText failed with error "));
+//     //     Serial.println(err);
+//     //     return;
+//     // }
+
+//     // Serial.println(F("Message received!"));
+//     // Serial.print(F("Inbound message size is "));
+//     // Serial.println(mtBufferSize);
+//     // messageReceived = true;
+
+//     // for (int i = 0; i < (int)mtBufferSize; ++i) {
+//     //     Serial.print(mt_buffer[i], HEX);
+//     //     if (isprint(mt_buffer[i])) {
+//     //         Serial.print(F("("));
+//     //         Serial.write(mt_buffer[i]);
+//     //         Serial.print(F(")"));
+//     //     }
+//     //     Serial.print(F(" "));
+//     // }
+//     // Serial.println();
+
+//     // Serial.print(F("Messages remaining to be retrieved: "));
+//     // Serial.println(modem.getWaitingMessageCount());
+
+//     // // Wait for the RING indicator to clear, if it's still asserted
+//     // while (modem.hasRingAsserted()) {
+//     //     Serial.println(F("RING is still asserted. Waiting for it to clear..."));
+//     //     delay(1000);
+//     // }
+
+//     // Serial.println(F("RING has cleared."));
+
+//     // Power down the modem
+//     Serial.println(F("Putting the 9603N to sleep."));
+//     err = modem.sleep();
+//     if (err != ISBD_SUCCESS) {
+//         Serial.print(F("*** modem.sleep failed with error "));
+//         Serial.print(err);
+//         Serial.println(F(" ***"));
+//     }
+// }
