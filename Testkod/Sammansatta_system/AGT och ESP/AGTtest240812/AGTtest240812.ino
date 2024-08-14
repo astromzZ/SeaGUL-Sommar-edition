@@ -1055,14 +1055,14 @@ void loop()
       //   superCapCharged = false;
       // }
       if (superCapCharged) {
-        receive_9603();
-        if (messageReceived) {
-          Serial.println(receivedMessageString);
-          messageReceived = false;
-          receivedMessageString = "";
+        send_9603();
+        if (messageSent) {
+          Serial.println(IridiumMessage);
+          messageSent = false;
+          IridiumMessage = "";
         }
         else {
-          Serial.println("No message received");
+          Serial.println("No message Sent");
         }
       }
       loop_step = zzz;
@@ -1119,7 +1119,7 @@ void loop()
           if (messageSent) {
             receive_9603();
             messageSent = false;
-            mySerial.println(receivedMessageString);
+            mySerial.println(receivedMessageString + ']');
             receivedMessageString = "";
           }
           loop_step = zzz;
@@ -1170,7 +1170,7 @@ void loop()
           loop_step = zzz;
         }
         else if (message == "p") {
-          Serial.println("ESP wants to know if the dropweight is released");
+          Serial.println("ESP wants to transmit dropweight released");
           uartWakeUpFlag = false;
           dropweight = true;
           delay(1000);

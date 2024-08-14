@@ -97,7 +97,7 @@ float nextDegree = 0;
 float minReservoir = 1700;
 float maxRerservoir = 2600;
 float desiredDepth = 0;
-
+String incomingAGTmessage = "";
 unsigned long stateStartMillis = 0; // Variable to store the start time of the states GlidingDown and GlidingUp
 
 float Vbat = 30.0; // Variable to store the battery voltage
@@ -1074,7 +1074,7 @@ void glidercontrol(void* pvParameters) {
           warningCount = 0;
 
           pitchSP = -20; // Setpoint for pitch
-          rollSP = 0; // Setpoint for roll
+          rollSP = -10; // Setpoint for roll
 
           //Future addition: Turning motion
 
@@ -1190,7 +1190,7 @@ void glidercontrol(void* pvParameters) {
           previousTime = 0;
 
           pitchSP = 20; // Setpoint for pitch
-          rollSP = 0; // Setpoint for roll
+          rollSP = 10; // Setpoint for roll
 
           //First start the pump to empty the reservoir.
           if (!glideUpReservoirEmpty) {
@@ -1304,11 +1304,12 @@ void glidercontrol(void* pvParameters) {
           //pitchSP = -20; // Setpoint for pitch, we want the antenna to be above the water.
           
           rollSP = 0; // Setpoint for roll
-          if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
-            //moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
-            moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
-          }
-
+          // if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
+          //   //moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
+          //   moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
+          // }
+          //moveRotationMotor(rotationmotorRunning, rollSP);
+          moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
           //gliderState = Idle;
           //Check if the dropweight has been released. If not, buissness as usual.
           if (dropweightReleased) {
@@ -1328,6 +1329,7 @@ void glidercontrol(void* pvParameters) {
                 Serial.println("Message sent: p");
                 delay(100);
                 digitalWrite(ACTIVATION_PIN, LOW);
+                gliderState = Idle;
               }
 
           } else {
@@ -1342,12 +1344,28 @@ void glidercontrol(void* pvParameters) {
             if (digitalRead(POKE_PIN) == HIGH) {
               Serial.println("AGT is ready to receive message");
               delay(1000);
-              mySerial.print("g]");
-              Serial.println("Message sent: g");
+              mySerial.print("m, ny pos]");
+              Serial.println("Message sent: m, ny pos");
               delay(100);
               digitalWrite(ACTIVATION_PIN, LOW);
             }
-          }
+            while(mySerial.available() == 0) {
+              delay(100);
+            }
+            if (mySerial.available()) {
+            incomingAGTmessage = mySerial.readStringUntil(']');
+            Serial.println("Received: " + incomingAGTmessage);
+            }
+            if(incomingAGTmessage == "d") {
+              Serial.println("Dive command received, moving to Diving state.");
+              gliderState = Diving;
+              stateStartMillis = currentMillis; //Store the time the Diving state started
+            }
+            else {
+              gliderState = Idle;
+            }
+        }
+          
 
           //Battery check. If the battery is low, we want to transmit that information to land.
 
@@ -1356,20 +1374,20 @@ void glidercontrol(void* pvParameters) {
 
           //Await command to dive again. 
 
-          //When command is given enter the Diving state and reset the number of dives
-          if (Serial.available() > 0) {
-              char incomingChar = Serial.read();
-              if (incomingChar == 'u') {
-                  Serial.println("Dive command received, moving to Diving state.");
+          //When command is given enter from serial monitor the Diving state and reset the number of dives
+          // if (Serial.available() > 0) {
+          //     char incomingChar = Serial.read();
+          //     if (incomingChar == 'u') {
+          //         Serial.println("Dive command received, moving to Diving state.");
 
-                  //Reset the number of dives
-                  n_dyk = 0;
+          //         //Reset the number of dives
+          //         n_dyk = 0;
 
-                  gliderState = Diving;
-                  stateStartMillis = currentMillis; //Store the time the Diving state started
-              }
-          }
-          
+          //         gliderState = Diving;
+          //         stateStartMillis = currentMillis; //Store the time the Diving state started
+          //     }
+          // }
+          attachInterrupt(POKE_PIN, pokeISR, RISING);
           break;
 
       case DropWeight:
