@@ -463,6 +463,13 @@ void leakSensorISR() {
     // If the leak sensor is triggered, release the dropweight
     gliderState = DropWeight;
 }
+void pokeISR() {
+    // If the AGT pokes the glider, print a message
+    Serial.println("Poked by AGT");
+    digitalWrite(ACTIVATION_PIN, HIGH);
+    delay(500);
+    digitalWrite(ACTIVATION_PIN, LOW);
+}
 
 void setup() {
     Serial.begin(115200);
@@ -493,6 +500,7 @@ void setup() {
     digitalWrite(ROT_SLEEP_PIN, LOW);
 
     attachInterrupt(LEAK_SENSOR_PIN, leakSensorISR, RISING);
+    attachInterrupt(POKE_PIN, pokeISR, RISING);
 
     Wire.begin(SDA_PIN, SCL_PIN);
     Wire.setClock(400000);
@@ -638,6 +646,7 @@ void moveRotationMotor (bool &rotationmotorRunning,float &rollSP) {
     rotationMotor.setMaxSpeed(100);
     rotationMotor.setAcceleration(50);  // Set acceleration to make movement smooth
 
+    digitalWrite(TRAN_SLEEP_PIN, HIGH);
     rotationMotor.moveTo(rollposition);
     rotationmotorRunning = true;
 
@@ -653,7 +662,7 @@ void moveRotationMotor (bool &rotationmotorRunning,float &rollSP) {
 void moveTranslationMotor (bool translationmotorRunning, float &pitchSP, float targetstepvalue){
 
     int transl_direction = (pitchSP < 0) ? 1 : -1;
-    int stepAmount = 1000 * transl_direction;
+    int stepAmount = 3000 * transl_direction;
     int pitchPosition = 0;
 
     if (gliderState == Surface) {
@@ -668,13 +677,13 @@ void moveTranslationMotor (bool translationmotorRunning, float &pitchSP, float t
     pitchPosition = constrain(pitchPosition, 0, 92000);
 
     // Set a controlled speed (adjust according to your needs)
-    translationMotor.setMaxSpeed(400);
+    translationMotor.setMaxSpeed(800);
     translationMotor.setAcceleration(200);  // Set acceleration to make movement smooth
 
     // Move the motor to the target position
+    digitalWrite(TRAN_SLEEP_PIN, HIGH);
     translationMotor.moveTo(pitchPosition);
     translationmotorRunning = true;
-
     // Run the motor until it reaches the target position
     while (translationmotorRunning && translationMotor.distanceToGo() != 0) {
         translationMotor.run();
@@ -1099,6 +1108,7 @@ void glidercontrol(void* pvParameters) {
               //   moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
               //   moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
               // }
+
               moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
               
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
@@ -1209,6 +1219,7 @@ void glidercontrol(void* pvParameters) {
               //   moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
               //   moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
               // }
+              
               moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
 
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
@@ -1281,6 +1292,7 @@ void glidercontrol(void* pvParameters) {
           break;
 
       case Surface:
+          detachInterrupt(POKE_PIN);
 
           if (currentMillis - previousPrintTime >= statePrintInterval) {
             Serial.println("Gliderstate: Surface");
@@ -1292,7 +1304,7 @@ void glidercontrol(void* pvParameters) {
           //pitchSP = -20; // Setpoint for pitch, we want the antenna to be above the water.
           
           rollSP = 0; // Setpoint for roll
-
+          //gliderState = Idle;
           //Check if the dropweight has been released. If not, buissness as usual.
           if (dropweightReleased) {
               //If the dropweight has been released, we want to transmit that information to land
@@ -1341,6 +1353,7 @@ void glidercontrol(void* pvParameters) {
 
           if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
             //moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
+            
             moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
           }
 
@@ -1357,7 +1370,7 @@ void glidercontrol(void* pvParameters) {
                   stateStartMillis = currentMillis; //Store the time the Diving state started
               }
           }
-
+          
           break;
 
       case DropWeight:
