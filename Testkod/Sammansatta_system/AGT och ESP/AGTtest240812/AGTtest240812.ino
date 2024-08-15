@@ -121,7 +121,7 @@ MS8607 barometricSensor; //Create an instance of the MS8607 object
 // Define how often messages are sent in SECONDS
 // This is the _quickest_ messages will be sent. Could be much slower than this depending on:
 // capacitor charge time; gnss fix time; Iridium timeout; etc.
-unsigned long INTERVAL = 15*60; // 5 minutes
+unsigned long INTERVAL = 15000*60; // 15000 minutes
 
 // Use this to keep a count of the second alarms from the rtc
 volatile unsigned long secondsCount = 0;
@@ -1115,7 +1115,7 @@ void loop()
           }
           if (gnssRead) {
             send_9603();
-            mySerial.println(agtLatitude, agtLongitude);
+            mySerial.println(agtLatitude, agtLongitude +']');
             gnssRead = false;
           }
           if (messageSent) {
