@@ -170,7 +170,7 @@ HardwareSerial mySerial(1); // Initialize UART1
 // Function prototypes
 
 void openLogSetup();
-void moveRotationMotor(SensorData receivedData, float &currentDegree, float &rollSP, bool &rotationmotorRunning);
+void moveRotationMotor(bool rotationmotorRunning, float &rollSP);
 void moveTranslationMotor (bool translationmotorRunning, float &pitchSP, float targetstepvalue);
 void glidercontrol(void* pvParameters);
 void datagathering(void* pvParameters);
@@ -254,7 +254,7 @@ void handleSurface() {
   // isIdle = false;
   // isDiving = false;
   // isCalibrating = true;
-  gliderState = Calibrating;
+  gliderState = Surface;
   Serial.println("Surface Started");
   server.send(200, "text/plain", "Surface Started");
 }
@@ -636,7 +636,7 @@ void openLogSetup() {
   myLog.syncFile();
 }
 
-void moveRotationMotor (bool &rotationmotorRunning,float &rollSP) {
+void moveRotationMotor (bool rotationmotorRunning,float &rollSP) {
     int rot_direction = (rollSP < 0) ? 1 : -1;
     int stepAmount = 100*16 * rot_direction;
     int rollposition = stepAmount;
@@ -646,12 +646,12 @@ void moveRotationMotor (bool &rotationmotorRunning,float &rollSP) {
     rotationMotor.setMaxSpeed(100);
     rotationMotor.setAcceleration(50);  // Set acceleration to make movement smooth
 
-    digitalWrite(TRAN_SLEEP_PIN, HIGH);
+    digitalWrite(ROT_SLEEP_PIN, HIGH);
     rotationMotor.moveTo(rollposition);
     rotationmotorRunning = true;
 
     while (rotationmotorRunning && rotationMotor.distanceToGo() != 0) {
-        rotationMotor.runSpeed();
+        rotationMotor.run();
     }
 
     rotationMotor.stop();
@@ -1110,7 +1110,7 @@ void glidercontrol(void* pvParameters) {
               // }
 
               moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
-              
+              moveRotationMotor(rotationmotorRunning, rollSP);
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
                 
                 if (receivedData.depth >= desiredDepth) {
@@ -1198,7 +1198,7 @@ void glidercontrol(void* pvParameters) {
               digitalWrite(PUMP_PIN, HIGH);
 
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
-                if (receivedData.potentiometer <= targetPotentiometerValue-300 || receivedData.potentiometer <= minReservoir) { //When the reservoir is empty we stop the pump. Value is not determined yet.
+                if (receivedData.potentiometer <= targetPotentiometerValue-100 || receivedData.potentiometer <= minReservoir) { //When the reservoir is empty we stop the pump. Value is not determined yet.
                     Serial.println("Reservoir at target, stopping pump.");
                     digitalWrite(PUMP_PIN, LOW);
                     glideUpReservoirEmpty = true;
@@ -1221,7 +1221,7 @@ void glidercontrol(void* pvParameters) {
               // }
               
               moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
-
+              moveRotationMotor(rotationmotorRunning, rollSP);
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
                 
                 if (receivedData.depth <= 0.2) {
@@ -1293,11 +1293,11 @@ void glidercontrol(void* pvParameters) {
 
       case Surface:
           detachInterrupt(POKE_PIN);
-
-          if (currentMillis - previousPrintTime >= statePrintInterval) {
-            Serial.println("Gliderstate: Surface");
-            previousPrintTime = currentMillis;
-          }
+          Serial.println("Gliderstate: Surface");
+          // if (currentMillis - previousPrintTime >= statePrintInterval) {
+          //   Serial.println("Gliderstate: Surface");
+          //   previousPrintTime = currentMillis;
+          // }
 
           errorMessage = "Surface state";
 
@@ -1309,9 +1309,10 @@ void glidercontrol(void* pvParameters) {
           //   moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
           // }
           //moveRotationMotor(rotationmotorRunning, rollSP);
-          moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
+          //moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
           //gliderState = Idle;
           //Check if the dropweight has been released. If not, buissness as usual.
+
           if (dropweightReleased) {
               //If the dropweight has been released, we want to transmit that information to land
               //so that the glider can be picked up.
@@ -1333,37 +1334,37 @@ void glidercontrol(void* pvParameters) {
               }
 
           } else {
-            Serial.println("Dropweight not released, send position via AGT and wait for command to dive again.");
+            // Serial.println("Dropweight not released, send position via AGT and wait for command to dive again.");
 
-            digitalWrite(ACTIVATION_PIN, HIGH);
+            // digitalWrite(ACTIVATION_PIN, HIGH);
 
-            while (digitalRead(POKE_PIN) == LOW) { // Might need a timeout counter here if the AGT is dead for some reason.
-              delay(100);
-            }
+            // while (digitalRead(POKE_PIN) == LOW) { // Might need a timeout counter here if the AGT is dead for some reason.
+            //   delay(100);
+            // }
 
-            if (digitalRead(POKE_PIN) == HIGH) {
-              Serial.println("AGT is ready to receive message");
-              delay(1000);
-              mySerial.print("m, ny pos]");
-              Serial.println("Message sent: m, ny pos");
-              delay(100);
-              digitalWrite(ACTIVATION_PIN, LOW);
-            }
-            while(mySerial.available() == 0) {
-              delay(100);
-            }
-            if (mySerial.available()) {
-            incomingAGTmessage = mySerial.readStringUntil(']');
-            Serial.println("Received: " + incomingAGTmessage);
-            }
-            if(incomingAGTmessage == "d") {
-              Serial.println("Dive command received, moving to Diving state.");
-              gliderState = Diving;
-              stateStartMillis = currentMillis; //Store the time the Diving state started
-            }
-            else {
-              gliderState = Idle;
-            }
+            // if (digitalRead(POKE_PIN) == HIGH) {
+            //   Serial.println("AGT is ready to receive message");
+            //   delay(1000);
+            //   mySerial.print("m, ny pos]");
+            //   Serial.println("Message sent: m, ny pos");
+            //   delay(100);
+            //   digitalWrite(ACTIVATION_PIN, LOW);
+            // }
+            // while(mySerial.available() == 0) {
+            //   delay(100);
+            // }
+            // if (mySerial.available()) {
+            // incomingAGTmessage = mySerial.readStringUntil(']');
+            // Serial.println("Received: " + incomingAGTmessage);
+            // }
+            // if(incomingAGTmessage == "d") {
+            //   Serial.println("Dive command received, moving to Diving state.");
+            //   gliderState = Diving;
+            //   stateStartMillis = currentMillis; //Store the time the Diving state started
+            // }
+            // else {
+            //   gliderState = Idle;
+            // }
         }
           
 
