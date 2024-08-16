@@ -1360,7 +1360,7 @@ void glidercontrol(void* pvParameters) {
                 gliderState = Idle;
               }
 
-          } else {
+          } else { // below is the function for communication with the AGT.
             // Serial.println("Dropweight not released, send position via AGT and wait for command to dive again.");
 
             // digitalWrite(ACTIVATION_PIN, HIGH);
