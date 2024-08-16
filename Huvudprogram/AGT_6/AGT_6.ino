@@ -1,4 +1,4 @@
-/*
+/* Notes from the original version of the code, Code bits are taken from Simple tracker and better tracker:
   Artemis Global Tracker
   Example: Simple Tracker
   
@@ -90,15 +90,13 @@
 // We use Serial1 to communicate with the Iridium modem. Serial1 on the ATP uses pin 24 for TX and 25 for RX. AGT uses the same pins.
 
 #include <EEPROM.h> // Needed for EEPROM
-
 #include "Tracker_EEPROM_Storage.h"
-
 
 trackerSettings myTrackerSettings; // Define storage for the tracker settings
 
-
 #include <IridiumSBD.h> //http://librarymanager/All#IridiumSBDI2C
 #define DIAGNOSTICS false // Change this to true to see IridiumSBD diagnostics
+
 // Declare the IridiumSBD object (including the sleep (ON/OFF) and Ring Indicator pins)
 IridiumSBD modem(Serial1, iridiumSleep, iridiumRI);
 
