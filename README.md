@@ -4,3 +4,5 @@
 This repository is for Chalmers underwater glider SEAgul. Here you will find code, instructions and construction files for the glider.
 
 Before handling the glider, make sure to read thorugh the manual. 
+
+The most recent CAD files can be found [here](https://drive.google.com/drive/folders/1H2lXxEGizccBVgk5y8HHm3Ga0hIDHSA2?usp=drive_link).
