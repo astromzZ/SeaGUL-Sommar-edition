@@ -4,12 +4,11 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <esp_wifi.h>
-#include "page.h"               // Include the header file with HTML content
-
+#include "page.h"                  // Include the header file with HTML content
 
 //.............................................................................
 
-//Pin definitions for the ESP32 S3 
+//Pin definitions for the ESP32S3 
 
 #define TRAN_DIR_PIN            17 //Translation motor direction pin
 #define TRAN_STEP_PIN           16 //Translation motor step pin
@@ -39,7 +38,6 @@
 //Stepper motor definitions
 
 #include <AccelStepper.h> //Library for the stepper motor
-
 AccelStepper translationMotor(AccelStepper::DRIVER, TRAN_STEP_PIN, TRAN_DIR_PIN);  //Create an instance of the stepper motor driver for the translation motor
 AccelStepper rotationMotor(AccelStepper::DRIVER, ROT_STEP_PIN, ROT_DIR_PIN); //Create an instance of the stepper motor driver for the rotation motor
 
@@ -52,10 +50,10 @@ long totalNumberofDives = 0; // Total number of dives the glider has done since 
 //Flag to check if the dropweight has been released
 bool dropweight = false;
 
+//Flags that are used to control the state of the glider.
 bool isIdle = false;
 bool isDiving = false;
 bool isCalibrating = false;
-
 bool isSurface = false;
 
 //Flags that are used to control the movement of the glider when in Idle state. 
@@ -65,13 +63,15 @@ bool rotatingRight = false;
 bool movingForward = false;
 bool movingBackward = false;
 
-
 //Vent and pump states
 bool pumpState = false; // false = off, true = on
 bool ventState = false; // false = closed, true = open
+
+//Error message that is displayed on the SeaGUL webpage
 String errorMessage = "";
 bool errorMessageSent = false;
 
+//Flag for wifi battery check
 bool batteryWiFiCheck = false;
 
 //Values that are displayed on the SeaGUL webpage
@@ -85,23 +85,31 @@ float displayconductivity = 0;
 float displaybattery = 0;
 float displayRotationSteps = 0;
 float displayTranslationSteps = 0;
-//Used to set target pump possition 
+
+//Used to set target pump possition and north value
 float targetPotentiometerValue = 0;
 float targetStepValue = 0;
 float targetJaw = 0;
 float North = 0;
+
 //Used to keep track on where the weight is positioned
 float nextPosition = 0;
 float nextDegree = 0;
 
+//Reservoir values
 float minReservoir = 1700;
 float maxRerservoir = 2600;
 float desiredDepth = 0;
+
+//Variables to store the incoming AGT message and the time the state started
 String incomingAGTmessage = "";
 unsigned long stateStartMillis = 0; // Variable to store the start time of the states GlidingDown and GlidingUp
 
+//Variables to store the battery voltage
 float Vbat = 30.0; // Variable to store the battery voltage
 #define V_LOW 29.0 // Low battery voltage threshold
+
+//.............................................................................
 
 // Struct to hold sensor data
 struct SensorData {
@@ -114,12 +122,14 @@ struct SensorData {
     float potentiometerSet;
     float temperature;
 };
+
 QueueHandle_t sensorDataQueue; // Queue to hold sensor data
 
 float lastconductivityreading = 0; // Variable to store the conductivity
 bool readingConductivity = false; // Flag to indicate if the conductivity is being read
-uint32_t next_ECread_time = 0;        
+uint32_t next_ECread_time = 0;     
 
+//.............................................................................
 
 // Enum to keep track of the state of the glider
 enum GliderState {
@@ -132,9 +142,14 @@ enum GliderState {
     DropWeight,
     Surface
 };
+
 GliderState gliderState = Glider_init; // Initial state of the glider
 bool startSetup = false; // Flag to indicate if the setup should run, activated by the SeaGUL webpage
 bool setupComplete = false; // Flag to indicate if the setup is complete
+
+//.............................................................................
+
+// Sensor objects
 
 // Pressure sensor
 #include <KellerLD.h>
@@ -182,6 +197,7 @@ void writeSD(String measurement) {
 // void sequencerstep1();  //forward declarations of functions to use them in the sequencer before defining them
 // void sequencerstep2();
 // Sequencer2 Seq(&sequencerstep1, 1000, &sequencerstep2, 0);  //calls the steps in sequence with time in between them
+
 //.............................................................................
 
 //NETWORKING
@@ -326,6 +342,7 @@ void handleStopMoveBackward() {
   server.send(200, "text/plain", "Move Backward stopped");
 }
 
+// Handle when pump button is pressed
 void handleTogglePump() {
   if (server.hasArg("state")) {
     String state = server.arg("state");
@@ -341,6 +358,7 @@ void handleTogglePump() {
   }
 }
 
+// Handle when vent button is pressed
 void handleToggleVent() {
   if (server.hasArg("state")) {
     String state = server.arg("state");
@@ -355,11 +373,15 @@ void handleToggleVent() {
     server.send(400, "text/plain", "Bad Request");
   }
 }
+
+// Handle when set target potentiometer value button is pressed
 void handleSetTargetPotentiometerValue() {
   targetPotentiometerValue = displaypotentiometer; // Set target variable
   Serial.print("Target Potentiometer Value set to: ");
   Serial.println(targetPotentiometerValue);
 }
+
+// Handle when set desired depth button is pressed
 void handleSetDesiredDepth() {
   if (server.hasArg("value")) {
     String depthValue = server.arg("value");
@@ -372,28 +394,33 @@ void handleSetDesiredDepth() {
   }
 }
 
+// Handle when set north button is pressed
 void handleSetNorth(){
   North = displayyaw;
   Serial.print("North set to: ");
   Serial.println(North);
 }
+
+// Handle when set target step value button is pressed
 void handleSetTargetStepValue() {
   targetStepValue = displayTranslationSteps; // Set target variable
   Serial.print("Target Step Value set to: ");
   Serial.println(targetStepValue);
 }
 
+// Handle error message
 void handleErrorMessage() {
     server.send(200, "text/plain", errorMessage); // Serve the captured error message
     errorMessage = ""; // Clear the error message after serving once
 }
 
+// Handle battery check
 void handleCheckBattery() {
     batteryWiFiCheck = true;
     server.send(200, "text/plain", "Battery voltage: " + String(displaybattery) + "V");
 }
 
-// Function to generate random number 
+// Function to generate random number - used as fill for disconnected sensors
 float randomFloat(float minValue, float maxValue) {
   return minValue + (float)rand() / ((float)RAND_MAX / (maxValue - minValue));
 }
@@ -448,6 +475,8 @@ void handleData() {
   server.send(200, "application/json", json);
 }
 
+//.............................................................................
+
 void getVBat() {
   digitalWrite(BAT_READ_ENABLE_PIN, HIGH); // Enable the voltage monitor
 
@@ -463,6 +492,7 @@ void leakSensorISR() {
     // If the leak sensor is triggered, release the dropweight
     gliderState = DropWeight;
 }
+
 void pokeISR() {
     // If the AGT pokes the glider, print a message
     Serial.println("Poked by AGT");
@@ -470,6 +500,8 @@ void pokeISR() {
     delay(500);
     digitalWrite(ACTIVATION_PIN, LOW);
 }
+
+//.............................................................................
 
 void setup() {
     Serial.begin(115200);
@@ -552,6 +584,8 @@ void setup() {
         NULL,                               // Task handle.
         1                                   // Core where the task should run
     );
+
+    //.............................................................................
 
     WiFi.softAP(ssid, password);
     WiFi.softAPConfig(local_IP, gateway, subnet);
@@ -657,8 +691,8 @@ void moveRotationMotor (bool rotationmotorRunning,float &rollSP) {
     rotationMotor.stop();
     rotationmotorRunning = false;
     digitalWrite(ROT_SLEEP_PIN, LOW);
-
 }
+
 void moveTranslationMotor (bool translationmotorRunning, float &pitchSP, float targetstepvalue){
 
     int transl_direction = (pitchSP < 0) ? 1 : -1;
@@ -672,7 +706,6 @@ void moveTranslationMotor (bool translationmotorRunning, float &pitchSP, float t
         pitchPosition = targetstepvalue + stepAmount;
     }
 
-
     // Ensure the target position stays within the valid range
     pitchPosition = constrain(pitchPosition, 0, 92000);
 
@@ -684,6 +717,7 @@ void moveTranslationMotor (bool translationmotorRunning, float &pitchSP, float t
     digitalWrite(TRAN_SLEEP_PIN, HIGH);
     translationMotor.moveTo(pitchPosition);
     translationmotorRunning = true;
+
     // Run the motor until it reaches the target position
     while (translationmotorRunning && translationMotor.distanceToGo() != 0) {
         translationMotor.run();
@@ -693,9 +727,10 @@ void moveTranslationMotor (bool translationmotorRunning, float &pitchSP, float t
     translationMotor.stop();
     translationmotorRunning = false;
     digitalWrite(TRAN_SLEEP_PIN, LOW);
-
 }
+
 void controlRotationMotor (float &rotation_direction, bool rotationmotorRunning) {
+    
     rotationMotor.setSpeed(100 * rotation_direction);
 
     if (rotationMotor.currentPosition() >= -250*16 && rotationMotor.currentPosition() <= 250*16) {
@@ -708,12 +743,11 @@ void controlRotationMotor (float &rotation_direction, bool rotationmotorRunning)
         rotationMotor.runSpeed();
         displayRotationSteps = rotationMotor.currentPosition();
     }
-
     // displayRotationSteps = rotationMotor.currentPosition();
-
 }
 
 void controlTranslationMotor (float &translation_direction, bool translationmotorRunning) {
+    
     translationMotor.setSpeed(800 * translation_direction);
 
     if (translationMotor.currentPosition() >= 0 && translationMotor.currentPosition() <= 92000) {
@@ -812,7 +846,8 @@ void glidercontrol(void* pvParameters) {
     //
     // 4. 
     // 
-    
+
+    //.............................................................................
     switch (gliderState) { 
 
       case Glider_init:
@@ -1043,7 +1078,7 @@ void glidercontrol(void* pvParameters) {
           stateStartMillis = currentMillis; //Store the time the GlidingDown state started
           break;
 
-      case Calibrating:
+      case Calibrating://.............................................................................
           //Set the displacement of rotation and translation to 0. 
           //This should be done when the pitch and roll are indicated as 0 on the SeaGul webpage,
           //before being sent on a mission. 
@@ -1060,7 +1095,7 @@ void glidercontrol(void* pvParameters) {
 
           break;
 
-      case GlidingDown:
+      case GlidingDown://.............................................................................
 
           if (currentMillis - previousPrintTime >= statePrintInterval) {
             Serial.println("Gliderstate: GlidingDown");
@@ -1093,7 +1128,7 @@ void glidercontrol(void* pvParameters) {
           }
 
           //After the reservoir is full we can regulate the pitch and roll of the glider.
-          //We can't do these simultaneously because the electrical system will be overloaded. 
+ 
           if (glideDownReservoirFull) {
 
               if (!previousTimeSet) { // Set the previous time to the current time after the reservoir is full.
@@ -1129,11 +1164,6 @@ void glidercontrol(void* pvParameters) {
                   }
                   
                 }
-
-                // if (incomingChar == 'q') {
-                //   Serial.println("Dropweight command received, moving to DropWeight state.");
-                //   gliderState = DropWeight;
-                // }
 
               }
 
@@ -1177,7 +1207,7 @@ void glidercontrol(void* pvParameters) {
 
           break;
       
-      case GlidingUp:
+      case GlidingUp://.............................................................................
 
           if (currentMillis - previousPrintTime >= statePrintInterval) {
             Serial.println("Gliderstate: GlidingUp");
@@ -1222,6 +1252,7 @@ void glidercontrol(void* pvParameters) {
               
               moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
               moveRotationMotor(rotationmotorRunning, rollSP);
+
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
                 
                 if (receivedData.depth <= 0.2) {
@@ -1250,11 +1281,6 @@ void glidercontrol(void* pvParameters) {
                   }
 
                 }
-
-                // if (incomingChar == 'q') {
-                //   Serial.println("Dropweight command received, moving to DropWeight state.");
-                //   gliderState = DropWeight;
-                // }
 
               }
 
@@ -1291,7 +1317,8 @@ void glidercontrol(void* pvParameters) {
 
           break;
 
-      case Surface:
+      case Surface://.............................................................................
+
           detachInterrupt(POKE_PIN);
           Serial.println("Gliderstate: Surface");
           // if (currentMillis - previousPrintTime >= statePrintInterval) {
@@ -1391,7 +1418,7 @@ void glidercontrol(void* pvParameters) {
           attachInterrupt(POKE_PIN, pokeISR, RISING);
           break;
 
-      case DropWeight:
+      case DropWeight: //...............................................................................................................
 
           Serial.println("Gliderstate: DropWeight"); 
 
