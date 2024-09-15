@@ -1206,6 +1206,22 @@ void glidercontrol(void* pvParameters) {
               Serial.println("To much time has passed, releasing weight by moving to DropWeight state.");
               gliderState = DropWeight;
           }
+          if (receivedData.depth >= desiredDepth) {
+            Serial.println("Depth reached, moving to GlidingUp state.");
+
+            //Reset boolean from the dive down.
+            glideDownReservoirFull = false;
+            correctStepperPosition = false;
+            gliderState = GlidingUp;
+            stateStartMillis = currentMillis; //Store the time the GlidingUp state started
+            previousTimeSet = false;
+
+            if (translationmotorRunning) {
+              digitalWrite(TRAN_SLEEP_PIN, LOW);  // Wake up the motor
+              translationmotorRunning = false;
+            }
+            
+          }
 
           delay(100);
 
