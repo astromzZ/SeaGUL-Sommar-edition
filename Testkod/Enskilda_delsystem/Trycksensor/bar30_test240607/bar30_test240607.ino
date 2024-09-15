@@ -4,8 +4,8 @@
 
 MS5837 sensor;
 
-#define SDA_PIN 17
-#define SCL_PIN 16
+#define SDA_PIN 13
+#define SCL_PIN 14
 
 void setup() {
 

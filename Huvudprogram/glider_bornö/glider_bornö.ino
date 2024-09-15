@@ -101,7 +101,7 @@ float nextDegree = 0;
 float minReservoir = 1700;
 float maxRerservoir = 2600;
 float desiredDepth = 0;
-
+float fakeDepth = 0;
 //Variables to store the incoming AGT message and the time the state started
 String incomingAGTmessage = "";
 unsigned long stateStartMillis = 0; // Variable to store the start time of the states GlidingDown and GlidingUp
@@ -819,7 +819,8 @@ void glidercontrol(void* pvParameters) {
   unsigned volatile long previousPrintTime = 0; // Variable to store the previous time the state was printed
   unsigned volatile long previousBatteryCheck = 0; // Variable to store the previous time the battery level was checked
   const unsigned long BAT_CHECK_INTERVAL = 60000 * 5; // Interval to check the battery level (in milliseconds) (5 minutes)
-  const unsigned long ONEHOUR = 3600000 * 100; // 1 hour in milliseconds, used to check if the glider has been going down/up for too long
+  const unsigned long ONEHOUR = 3600000; // 1 hour in milliseconds, used to check if the glider has been going down/up for too long
+  const unsigned long ONEMINUTE = 60000; // 1 minute in milliseconds, used to check if the glider has been going down/up for too long
   const unsigned long sampleInterval = 10000; //Interval to sample the depth (in milliseconds)
   const unsigned long statePrintInterval = 5000; //Interval to check if the glider is moving upwards instead of downwards (in milliseconds)
   unsigned int warningCount = 0; // Variable to keep track of the number of warnings
@@ -1103,7 +1104,9 @@ void glidercontrol(void* pvParameters) {
             previousPrintTime = currentMillis;
           }
 
-          errorMessage = "Gliding down state";
+          //errorMessage = "Gliding down state";
+          errorMessage = "Depth: " + String(fakeDepth);
+          
 
           //Reset flag, warning count and timer
           glideUpReservoirEmpty = false;
@@ -1206,7 +1209,23 @@ void glidercontrol(void* pvParameters) {
               Serial.println("To much time has passed, releasing weight by moving to DropWeight state.");
               gliderState = DropWeight;
           }
-          if (receivedData.depth >= desiredDepth) {
+          // if (receivedData.depth >= desiredDepth) {
+          //   Serial.println("Depth reached, moving to GlidingUp state.");
+
+          //   //Reset boolean from the dive down.
+          //   glideDownReservoirFull = false;
+          //   correctStepperPosition = false;
+          //   gliderState = GlidingUp;
+          //   stateStartMillis = currentMillis; //Store the time the GlidingUp state started
+          //   previousTimeSet = false;
+
+          //   if (translationmotorRunning) {
+          //     digitalWrite(TRAN_SLEEP_PIN, LOW);  // Wake up the motor
+          //     translationmotorRunning = false;
+          //   }
+            
+          // }
+          if (fakeDepth >= desiredDepth) {
             Serial.println("Depth reached, moving to GlidingUp state.");
 
             //Reset boolean from the dive down.
@@ -1221,9 +1240,10 @@ void glidercontrol(void* pvParameters) {
               translationmotorRunning = false;
             }
             
-          }
+          }          
 
           delay(100);
+          fakeDepth += 0.1;
 
           break;
       

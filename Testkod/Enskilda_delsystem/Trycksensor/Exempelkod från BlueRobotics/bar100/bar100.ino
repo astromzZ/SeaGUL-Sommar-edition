@@ -39,8 +39,8 @@ THE SOFTWARE.
 
 KellerLD sensor;
 
-#define SDA_PIN 17
-#define SCL_PIN 16
+#define SDA_PIN 13
+#define SCL_PIN 14
 
 void setup() {
   Serial.begin(115200);
