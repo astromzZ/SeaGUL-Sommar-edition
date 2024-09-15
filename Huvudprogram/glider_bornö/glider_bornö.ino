@@ -50,6 +50,7 @@ long totalNumberofDives = 0; // Total number of dives the glider has done since 
 //Flag to check if the dropweight has been released
 bool dropweight = false;
 
+bool correctStepperPosition  = false;
 //Flags that are used to control the state of the glider.
 bool isIdle = false;
 bool isDiving = false;
@@ -1143,9 +1144,12 @@ void glidercontrol(void* pvParameters) {
               //   moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
               //   moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
               // }
+              if (correctStepperPosition == false) {
+                moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
+                moveRotationMotor(rotationmotorRunning, rollSP);
+                correctStepperPosition = true;
+              }
 
-              moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
-              moveRotationMotor(rotationmotorRunning, rollSP);
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
                 
                 if (receivedData.depth >= desiredDepth) {
@@ -1153,7 +1157,7 @@ void glidercontrol(void* pvParameters) {
 
                   //Reset boolean from the dive down.
                   glideDownReservoirFull = false;
-
+                  correctStepperPosition = false;
                   gliderState = GlidingUp;
                   stateStartMillis = currentMillis; //Store the time the GlidingUp state started
                   previousTimeSet = false;
@@ -1249,15 +1253,18 @@ void glidercontrol(void* pvParameters) {
               //   moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
               //   moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
               // }
-              
-              moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
-              moveRotationMotor(rotationmotorRunning, rollSP);
+              if (correctStepperPosition == false) {
+                moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
+                moveRotationMotor(rotationmotorRunning, rollSP);
+                correctStepperPosition = true;
+              }
 
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
                 
                 if (receivedData.depth <= 0.2) {
                   Serial.println("Surface reached, moving to surface or dive state. Dive number: " + String(n_dyk));
 
+                  correctStepperPosition = false;
                   //Since a dive is complete we add 1 to the number of dives.
                   if (!dykcount) {
                       n_dyk += 1;
