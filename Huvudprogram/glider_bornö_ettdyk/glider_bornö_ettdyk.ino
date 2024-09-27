@@ -1149,7 +1149,7 @@ void glidercontrol(void* pvParameters) {
               // }
               if (correctStepperPosition == false) {
                 moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
-                moveRotationMotor(rotationmotorRunning, rollSP);
+                //moveRotationMotor(rotationmotorRunning, rollSP);
                 correctStepperPosition = true;
               }
 
@@ -1209,22 +1209,7 @@ void glidercontrol(void* pvParameters) {
               Serial.println("To much time has passed, releasing weight by moving to DropWeight state.");
               gliderState = DropWeight;
           }
-          // if (receivedData.depth >= desiredDepth) {
-          //   Serial.println("Depth reached, moving to GlidingUp state.");
 
-          //   //Reset boolean from the dive down.
-          //   glideDownReservoirFull = false;
-          //   correctStepperPosition = false;
-          //   gliderState = GlidingUp;
-          //   stateStartMillis = currentMillis; //Store the time the GlidingUp state started
-          //   previousTimeSet = false;
-
-          //   if (translationmotorRunning) {
-          //     digitalWrite(TRAN_SLEEP_PIN, LOW);  // Wake up the motor
-          //     translationmotorRunning = false;
-          //   }
-            
-          // }
           if (receivedData.depth >= desiredDepth) {
             Serial.println("Depth reached, moving to GlidingUp state.");
 
@@ -1291,7 +1276,7 @@ void glidercontrol(void* pvParameters) {
               // }
               if (correctStepperPosition == false) {
                 moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
-                moveRotationMotor(rotationmotorRunning, rollSP);
+                //moveRotationMotor(rotationmotorRunning, rollSP);
                 correctStepperPosition = true;
               }
 
@@ -1380,7 +1365,7 @@ void glidercontrol(void* pvParameters) {
 
           if (correctStepperPosition == false) {
             moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
-            moveRotationMotor(rotationmotorRunning, rollSP);
+            //moveRotationMotor(rotationmotorRunning, rollSP);
             correctStepperPosition = true;
           }
           gliderState = Idle;
@@ -1484,7 +1469,7 @@ void glidercontrol(void* pvParameters) {
           break;
     }
   }
-}
+}   
 
 
 void datagathering(void* pvParameters) {
@@ -1552,7 +1537,7 @@ void datagathering(void* pvParameters) {
       delay(35);
       // Read pressure 
       Psensor.read();
-      data.depth = Psensor.depth();
+      data.depth = Psensor.depth() + 1;
       data.pressure = Psensor.pressure();
       displaypressure = data.depth;
 
@@ -1585,13 +1570,13 @@ void datagathering(void* pvParameters) {
       }
 
       // Log the data to the SD card
-      String logData = "Pitch: " + String(data.pitch) + " degrees, " +
-                        "Roll: " + String(data.roll) + " degrees, " +
-                        "Yaw: " + String(data.yaw) + " degrees, " +
-                        "Depth: " + String(data.depth) + " m, " +
-                        "Pressure: " + String(data.pressure) + " mbar, " +
-                        "Conductivity" + String(lastconductivityreading) + " mS/cm, " +
-                        "Temperature: " + String(data.temperature) + " Celsius";
+      String logData = String(data.pitch) + "," + //+ " degrees, " +
+                        String(data.roll) + "," + //+ " degrees, " +
+                        String(data.yaw) + "," +  //" degrees, " +
+                        String(data.depth) + "," + //+ " m, " +
+                        String(data.pressure) + "," + //+ " mbar, " +
+                        String(lastconductivityreading) + "," + //+ " mS/cm, " +
+                        String(data.temperature); //+ " Celsius";
                       //  "Batterycurrent: " + String(current) + " A";
       writeSD(logData);
     //   Serial.println(logData);
