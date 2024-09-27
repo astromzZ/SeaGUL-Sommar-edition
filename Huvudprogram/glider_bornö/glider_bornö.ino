@@ -1407,60 +1407,39 @@ void glidercontrol(void* pvParameters) {
               }
 
           } else { // below is the function for communication with the AGT.
-            // Serial.println("Dropweight not released, send position via AGT and wait for command to dive again.");
+            Serial.println("Dropweight not released, send position via AGT and wait for command to dive again.");
 
-            // digitalWrite(ACTIVATION_PIN, HIGH);
+            digitalWrite(ACTIVATION_PIN, HIGH);
 
-            // while (digitalRead(POKE_PIN) == LOW) { // Might need a timeout counter here if the AGT is dead for some reason.
-            //   delay(100);
-            // }
+            while (digitalRead(POKE_PIN) == LOW) { // Might need a timeout counter here if the AGT is dead for some reason.
+              delay(100);
+            }
 
-            // if (digitalRead(POKE_PIN) == HIGH) {
-            //   Serial.println("AGT is ready to receive message");
-            //   delay(1000);
-            //   mySerial.print("m, ny pos]");
-            //   Serial.println("Message sent: m, ny pos");
-            //   delay(100);
-            //   digitalWrite(ACTIVATION_PIN, LOW);
-            // }
-            // while(mySerial.available() == 0) {
-            //   delay(100);
-            // }
-            // if (mySerial.available()) {
-            // incomingAGTmessage = mySerial.readStringUntil(']');
-            // Serial.println("Received: " + incomingAGTmessage);
-            // }
-            // if(incomingAGTmessage == "d") {
-            //   Serial.println("Dive command received, moving to Diving state.");
-            //   gliderState = Diving;
-            //   stateStartMillis = currentMillis; //Store the time the Diving state started
-            // }
-            // else {
-            //   gliderState = Idle;
-            // }
+            if (digitalRead(POKE_PIN) == HIGH) {
+              Serial.println("AGT is ready to receive message");
+              delay(1000);
+              mySerial.print("m, ny pos]");
+              Serial.println("Message sent: m, ny pos");
+              delay(100);
+              digitalWrite(ACTIVATION_PIN, LOW);
+            }
+            while(mySerial.available() == 0) {
+              delay(100);
+            }
+            if (mySerial.available()) {
+            incomingAGTmessage = mySerial.readStringUntil(']');
+            Serial.println("Received: " + incomingAGTmessage);
+            }
+            if(incomingAGTmessage == "d") {
+              Serial.println("Dive command received, moving to Diving state.");
+              gliderState = Diving;
+              stateStartMillis = currentMillis; //Store the time the Diving state started
+            }
+            else {
+              gliderState = Idle;
+            }
         }
           
-
-          //Battery check. If the battery is low, we want to transmit that information to land.
-
-          //Send GPS position to land along with the state of the glider.
-
-
-          //Await command to dive again. 
-
-          //When command is given enter from serial monitor the Diving state and reset the number of dives
-          // if (Serial.available() > 0) {
-          //     char incomingChar = Serial.read();
-          //     if (incomingChar == 'u') {
-          //         Serial.println("Dive command received, moving to Diving state.");
-
-          //         //Reset the number of dives
-          //         n_dyk = 0;
-
-          //         gliderState = Diving;
-          //         stateStartMillis = currentMillis; //Store the time the Diving state started
-          //     }
-          // }
           attachInterrupt(POKE_PIN, pokeISR, RISING);
           break;
 
