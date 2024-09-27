@@ -1403,6 +1403,7 @@ void glidercontrol(void* pvParameters) {
                 Serial.println("Message sent: p");
                 delay(100);
                 digitalWrite(ACTIVATION_PIN, LOW);
+                correctStepperPosition = false;
                 gliderState = Idle;
               }
 
@@ -1438,6 +1439,7 @@ void glidercontrol(void* pvParameters) {
             // else {
             //   gliderState = Idle;
             // }
+            correctStepperPosition = false;
         }
           
 
@@ -1448,19 +1450,6 @@ void glidercontrol(void* pvParameters) {
 
           //Await command to dive again. 
 
-          //When command is given enter from serial monitor the Diving state and reset the number of dives
-          // if (Serial.available() > 0) {
-          //     char incomingChar = Serial.read();
-          //     if (incomingChar == 'u') {
-          //         Serial.println("Dive command received, moving to Diving state.");
-
-          //         //Reset the number of dives
-          //         n_dyk = 0;
-
-          //         gliderState = Diving;
-          //         stateStartMillis = currentMillis; //Store the time the Diving state started
-          //     }
-          // }
           attachInterrupt(POKE_PIN, pokeISR, RISING);
           break;
 
