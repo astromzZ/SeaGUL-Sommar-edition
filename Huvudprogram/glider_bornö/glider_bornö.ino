@@ -1297,7 +1297,7 @@ void glidercontrol(void* pvParameters) {
 
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
                 
-                if (receivedData.depth <= 0.2) {
+                if (receivedData.depth <= 0.5) {
                   Serial.println("Surface reached, moving to surface or dive state. Dive number: " + String(n_dyk));
 
                   correctStepperPosition = false;
@@ -1371,15 +1371,19 @@ void glidercontrol(void* pvParameters) {
 
           errorMessage = "Surface state";
 
-          //pitchSP = -20; // Setpoint for pitch, we want the antenna to be above the water.
-          
+          pitchSP = -20; // Setpoint for pitch, we want the antenna to be above the water.
           rollSP = 0; // Setpoint for roll
+          
           // if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
           //   //moveRotationMotor(receivedData, currentDegree, rollSP, rotationmotorRunning);
           //   moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
           // }
-          //moveRotationMotor(rotationmotorRunning, rollSP);
-          //moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
+
+          if (correctStepperPosition == false) {
+            moveTranslationMotor(translationmotorRunning, pitchSP, targetStepValue);
+            moveRotationMotor(rotationmotorRunning, rollSP);
+            correctStepperPosition = true;
+          }
           //gliderState = Idle;
           //Check if the dropweight has been released. If not, buissness as usual.
 
@@ -1601,7 +1605,7 @@ void datagathering(void* pvParameters) {
                         "Conductivity" + String(lastconductivityreading) + " mS/cm, " +
                         "Temperature: " + String(data.temperature) + " Celsius";
                       //  "Batterycurrent: " + String(current) + " A";
-      // writeSD(logData);
+      writeSD(logData);
     //   Serial.println(logData);
 
       // delay(100); // Adding a delay to reduce bus congestion and improve stability
