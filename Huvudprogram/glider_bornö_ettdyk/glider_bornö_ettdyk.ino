@@ -1104,8 +1104,8 @@ void glidercontrol(void* pvParameters) {
             previousPrintTime = currentMillis;
           }
 
-          //errorMessage = "Gliding down state";
-          errorMessage = "Depth: " + String(fakeDepth);
+          errorMessage = "Gliding down state";
+          //errorMessage = "Depth: " + String(fakeDepth);
           
 
           //Reset flag, warning count and timer
@@ -1225,7 +1225,7 @@ void glidercontrol(void* pvParameters) {
           //   }
             
           // }
-          if (fakeDepth >= desiredDepth) {
+          if (receivedData.depth >= desiredDepth) {
             Serial.println("Depth reached, moving to GlidingUp state.");
 
             //Reset boolean from the dive down.
@@ -1243,7 +1243,7 @@ void glidercontrol(void* pvParameters) {
           }          
 
           delay(100);
-          fakeDepth += 0.1;
+          //fakeDepth += 0.1;
 
           break;
       
