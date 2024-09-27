@@ -1383,7 +1383,7 @@ void glidercontrol(void* pvParameters) {
             moveRotationMotor(rotationmotorRunning, rollSP);
             correctStepperPosition = true;
           }
-          //gliderState = Idle;
+          gliderState = Idle;
           //Check if the dropweight has been released. If not, buissness as usual.
 
           if (dropweightReleased) {
