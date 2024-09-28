@@ -1084,7 +1084,7 @@ void glidercontrol(void* pvParameters) {
               digitalWrite(VALVE_PIN, HIGH);
 
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
-                  if (receivedData.potentiometer >= targetPotentiometerValue+100 || receivedData.potentiometer>= maxRerservoir ) { 
+                  if (receivedData.potentiometer >= targetPotentiometerValue+300 || receivedData.potentiometer>= maxRerservoir ) { 
                       Serial.println("Reservoir at target, closing valve.");
                       digitalWrite(VALVE_PIN, LOW);
                       glideDownReservoirFull = true; 
@@ -1198,7 +1198,7 @@ void glidercontrol(void* pvParameters) {
               digitalWrite(PUMP_PIN, HIGH);
 
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
-                if (receivedData.potentiometer <= targetPotentiometerValue-100 || receivedData.potentiometer <= minReservoir) { //When the reservoir is empty we stop the pump. Value is not determined yet.
+                if (receivedData.potentiometer <= targetPotentiometerValue-300 || receivedData.potentiometer <= minReservoir) { //When the reservoir is empty we stop the pump. Value is not determined yet.
                     Serial.println("Reservoir at target, stopping pump.");
                     digitalWrite(PUMP_PIN, LOW);
                     glideUpReservoirEmpty = true;

@@ -97,6 +97,12 @@ float nextDegree = 0;
 float minReservoir = 1700;
 float maxRerservoir = 2600;
 float desiredDepth = 0;
+
+#define DEPTH_WINDOW_SIZE 10
+float depthBuffer[DEPTH_WINDOW_SIZE];  // Array to hold the depth values
+int bufferIndex = 0;                   // Points to the next insertion index in the buffer
+int bufferCount = 0; 
+
 String incomingAGTmessage = "";
 unsigned long stateStartMillis = 0; // Variable to store the start time of the states GlidingDown and GlidingUp
 
@@ -1084,7 +1090,7 @@ void glidercontrol(void* pvParameters) {
               digitalWrite(VALVE_PIN, HIGH);
 
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
-                  if (receivedData.potentiometer >= targetPotentiometerValue+100 || receivedData.potentiometer>= maxRerservoir ) { 
+                  if (receivedData.potentiometer >= targetPotentiometerValue+300 || receivedData.potentiometer>= maxRerservoir ) { 
                       Serial.println("Reservoir at target, closing valve.");
                       digitalWrite(VALVE_PIN, LOW);
                       glideDownReservoirFull = true; 
@@ -1198,7 +1204,7 @@ void glidercontrol(void* pvParameters) {
               digitalWrite(PUMP_PIN, HIGH);
 
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
-                if (receivedData.potentiometer <= targetPotentiometerValue-100 || receivedData.potentiometer <= minReservoir) { //When the reservoir is empty we stop the pump. Value is not determined yet.
+                if (receivedData.potentiometer <= targetPotentiometerValue-300 || receivedData.potentiometer <= minReservoir) { //When the reservoir is empty we stop the pump. Value is not determined yet.
                     Serial.println("Reservoir at target, stopping pump.");
                     digitalWrite(PUMP_PIN, LOW);
                     glideUpReservoirEmpty = true;
@@ -1425,6 +1431,43 @@ void glidercontrol(void* pvParameters) {
   }
 }
 
+float calculateMedian() {
+    float sortedBuffer[DEPTH_WINDOW_SIZE]; // Temporary array for sorting
+    int count = bufferCount; // Use the current count of values in the buffer
+
+    // Copy the values from the circular buffer into the sorted buffer
+    for (int i = 0; i < count; i++) {
+        sortedBuffer[i] = depthBuffer[i];
+    }
+
+    // Sort the temporary buffer using a simple bubble sort
+    for (int i = 0; i < count - 1; i++) {
+        for (int j = i + 1; j < count; j++) {
+            if (sortedBuffer[i] > sortedBuffer[j]) {
+                float temp = sortedBuffer[i];
+                sortedBuffer[i] = sortedBuffer[j];
+                sortedBuffer[j] = temp;
+            }
+        }
+    }
+
+    // Calculate the median
+    if (count % 2 == 0) {
+        return (sortedBuffer[count / 2 - 1] + sortedBuffer[count / 2]) / 2.0; // Average of two middle values
+    } else {
+        return sortedBuffer[count / 2]; // Middle value
+    }
+}
+
+void addDepthValue(float newDepth) {
+    depthBuffer[bufferIndex] = newDepth; // Store the new depth value at the current index
+    bufferIndex = (bufferIndex + 1) % DEPTH_WINDOW_SIZE; // Move to the next index, wrapping around if necessary
+
+    // Increment bufferCount up to the maximum buffer size
+    if (bufferCount < DEPTH_WINDOW_SIZE) {
+        bufferCount++;
+    }
+}
 
 void datagathering(void* pvParameters) {
   while (true) {
@@ -1494,6 +1537,8 @@ void datagathering(void* pvParameters) {
       data.depth = Psensor.depth();
       data.pressure = Psensor.pressure();
       displaypressure = data.depth;
+      addDepthValue(data.depth);
+      float medianDepth = calculateMedian(); 
 
       delay(35);
       // Read temperature
@@ -1528,9 +1573,12 @@ void datagathering(void* pvParameters) {
                         String(data.roll) + "," + //+ " degrees, " +
                         String(data.yaw) + "," +  //" degrees, " +
                         String(data.depth) + "," + //+ " m, " +
+                        String(medianDepth) + "," +
                         String(data.pressure) + "," + //+ " mbar, " +
                         String(lastconductivityreading) + "," + //+ " mS/cm, " +
-                        String(data.temperature); //+ " Celsius";
+                        String(data.temperature) + "," +
+                        String(data.potentiometer) + "," +
+                        String(gliderState); //+ " Celsius";
       writeSD(logData);
     //   Serial.println(logData);
 
