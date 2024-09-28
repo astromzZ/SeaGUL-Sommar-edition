@@ -1524,14 +1524,13 @@ void datagathering(void* pvParameters) {
       }
 
       // Log the data to the SD card
-      String logData = "Pitch: " + String(data.pitch) + " degrees, " +
-                        "Roll: " + String(data.roll) + " degrees, " +
-                        "Yaw: " + String(data.yaw) + " degrees, " +
-                        "Depth: " + String(data.depth) + " m, " +
-                        "Pressure: " + String(data.pressure) + " mbar, " +
-                        "Conductivity" + String(lastconductivityreading) + " mS/cm, " +
-                        "Temperature: " + String(data.temperature) + " Celsius";
-                      //  "Batterycurrent: " + String(current) + " A";
+      String logData = String(data.pitch) + "," + //+ " degrees, " +
+                        String(data.roll) + "," + //+ " degrees, " +
+                        String(data.yaw) + "," +  //" degrees, " +
+                        String(data.depth) + "," + //+ " m, " +
+                        String(data.pressure) + "," + //+ " mbar, " +
+                        String(lastconductivityreading) + "," + //+ " mS/cm, " +
+                        String(data.temperature); //+ " Celsius";
       writeSD(logData);
     //   Serial.println(logData);
 
