@@ -319,7 +319,7 @@ const char page_html[] PROGMEM = R"rawliteral(
       
       <form id="depthForm" onsubmit="sendDepthValue(event);">
         <label for="depthInput">Enter desired depth (m):</label>
-        <input type="number" id="depthInput" name="depthInput" min="0" max="100" required>
+        <input type="number" id="depthInput" name="depthInput" min="-2" max="100" required>
         <button type="submit">Set value</button>
       </form>
 
@@ -768,7 +768,7 @@ const char page_html[] PROGMEM = R"rawliteral(
       event.preventDefault(); // Prevent the default form submission behavior
 
       const depthInput = document.getElementById('depthInput').value; // Get the value from the input field
-      const depthValue = Math.min(Math.max(depthInput, 0), 100); // Ensure the value is between 0 and 100
+      const depthValue = Math.min(Math.max(depthInput, -2), 100); // Ensure the value is between 0 and 100
 
       fetch(`/setDesiredDepth?value=${depthValue}`, { method: 'GET' })
           .then(response => {
