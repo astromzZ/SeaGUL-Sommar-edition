@@ -94,9 +94,10 @@ float North = 0;
 float nextPosition = 0;
 float nextDegree = 0;
 
-float minReservoir = 1700;
-float maxRerservoir = 2600;
+float minReservoir = 2330;
+float maxRerservoir = 3560;
 float desiredDepth = 0;
+float medianDepth = 0;
 
 #define DEPTH_WINDOW_SIZE 10
 float depthBuffer[DEPTH_WINDOW_SIZE];  // Array to hold the depth values
@@ -1119,7 +1120,7 @@ void glidercontrol(void* pvParameters) {
               //moveRotationMotor(rotationmotorRunning, rollSP);
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
                 
-                if (receivedData.depth >= desiredDepth) {
+                if (medianDepth >= desiredDepth) {
                   Serial.println("Depth reached, moving to GlidingUp state.");
 
                   //Reset boolean from the dive down.
@@ -1230,7 +1231,7 @@ void glidercontrol(void* pvParameters) {
               //moveRotationMotor(rotationmotorRunning, rollSP);
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
                 
-                if (receivedData.depth <= 0.2) {
+                if (medianDepth <= 0.2) {
                   Serial.println("Surface reached, moving to surface or dive state. Dive number: " + String(n_dyk));
 
                   //Since a dive is complete we add 1 to the number of dives.
@@ -1538,7 +1539,7 @@ void datagathering(void* pvParameters) {
       data.pressure = Psensor.pressure();
       displaypressure = data.depth;
       addDepthValue(data.depth);
-      float medianDepth = calculateMedian(); 
+      medianDepth = calculateMedian(); 
 
       delay(35);
       // Read temperature
