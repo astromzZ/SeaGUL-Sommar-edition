@@ -98,11 +98,15 @@ float minReservoir = 2330;
 float maxRerservoir = 3560;
 float desiredDepth = 0;
 float medianDepth = 0;
+float medianPot = 0;
 
 #define DEPTH_WINDOW_SIZE 10
 float depthBuffer[DEPTH_WINDOW_SIZE];  // Array to hold the depth values
 int bufferIndex = 0;                   // Points to the next insertion index in the buffer
 int bufferCount = 0; 
+float potBuffer[DEPTH_WINDOW_SIZE];  // Array to hold the depth values
+int potBufferIndex = 0;                   // Points to the next insertion index in the buffer
+int potBufferCount = 0;
 
 String incomingAGTmessage = "";
 unsigned long stateStartMillis = 0; // Variable to store the start time of the states GlidingDown and GlidingUp
@@ -159,7 +163,7 @@ ICM_20948_I2C myICM;
 // SD-card logging
 #include "SparkFun_Qwiic_OpenLog_Arduino_Library.h"
 OpenLog myLog;
-String fileName = "SD-test10_240612.txt"; //Name of the file that the data will be stored in
+String fileName = "SD_240928.txt"; //Name of the file that the data will be stored in
 
 // Salinity sensor
 #include <Ezo_i2c.h>
@@ -468,7 +472,7 @@ void getVBat() {
 
 void leakSensorISR() {
     // If the leak sensor is triggered, release the dropweight
-    gliderState = DropWeight;
+    //gliderState = DropWeight;
 }
 void pokeISR() {
     // If the AGT pokes the glider, print a message
@@ -1091,7 +1095,7 @@ void glidercontrol(void* pvParameters) {
               digitalWrite(VALVE_PIN, HIGH);
 
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
-                  if (receivedData.potentiometer >= targetPotentiometerValue+300 || receivedData.potentiometer>= maxRerservoir ) { 
+                  if (medianPot >= targetPotentiometerValue+300 || medianPot>= maxRerservoir ) { 
                       Serial.println("Reservoir at target, closing valve.");
                       digitalWrite(VALVE_PIN, LOW);
                       glideDownReservoirFull = true; 
@@ -1205,7 +1209,7 @@ void glidercontrol(void* pvParameters) {
               digitalWrite(PUMP_PIN, HIGH);
 
               if (xQueueReceive(sensorDataQueue, &receivedData, portMAX_DELAY)) {
-                if (receivedData.potentiometer <= targetPotentiometerValue-300 || receivedData.potentiometer <= minReservoir) { //When the reservoir is empty we stop the pump. Value is not determined yet.
+                if (medianPot <= targetPotentiometerValue-300 || medianPot <= minReservoir) { //When the reservoir is empty we stop the pump. Value is not determined yet.
                     Serial.println("Reservoir at target, stopping pump.");
                     digitalWrite(PUMP_PIN, LOW);
                     glideUpReservoirEmpty = true;
@@ -1432,7 +1436,7 @@ void glidercontrol(void* pvParameters) {
   }
 }
 
-float calculateMedian() {
+float calculateMedianDepth() {
     float sortedBuffer[DEPTH_WINDOW_SIZE]; // Temporary array for sorting
     int count = bufferCount; // Use the current count of values in the buffer
 
@@ -1469,6 +1473,45 @@ void addDepthValue(float newDepth) {
         bufferCount++;
     }
 }
+
+float calculateMedianPot() {
+    float sortedBuffer[DEPTH_WINDOW_SIZE]; // Temporary array for sorting
+    int count = potBufferCount; // Use the current count of values in the buffer
+
+    // Copy the values from the circular buffer into the sorted buffer
+    for (int i = 0; i < count; i++) {
+        sortedBuffer[i] = potBuffer[i];
+    }
+
+    // Sort the temporary buffer using a simple bubble sort
+    for (int i = 0; i < count - 1; i++) {
+        for (int j = i + 1; j < count; j++) {
+            if (sortedBuffer[i] > sortedBuffer[j]) {
+                float temp = sortedBuffer[i];
+                sortedBuffer[i] = sortedBuffer[j];
+                sortedBuffer[j] = temp;
+            }
+        }
+    }
+
+    // Calculate the median
+    if (count % 2 == 0) {
+        return (sortedBuffer[count / 2 - 1] + sortedBuffer[count / 2]) / 2.0; // Average of two middle values
+    } else {
+        return sortedBuffer[count / 2]; // Middle value
+    }
+}
+
+void addPotValue(float newPot) {
+    potBuffer[potBufferIndex] = newPot; // Store the new depth value at the current index
+    potBufferIndex = (potBufferIndex + 1) % DEPTH_WINDOW_SIZE; // Move to the next index, wrapping around if necessary
+
+    // Increment bufferCount up to the maximum buffer size
+    if (potBufferCount < DEPTH_WINDOW_SIZE) {
+        potBufferCount++;
+    }
+}
+
 
 void datagathering(void* pvParameters) {
   while (true) {
@@ -1539,7 +1582,7 @@ void datagathering(void* pvParameters) {
       data.pressure = Psensor.pressure();
       displaypressure = data.depth;
       addDepthValue(data.depth);
-      medianDepth = calculateMedian(); 
+      medianDepth = calculateMedianDepth(); 
 
       delay(35);
       // Read temperature
@@ -1564,6 +1607,10 @@ void datagathering(void* pvParameters) {
       data.potentiometer = analogRead(SOFT_POT_PIN);
       displaypotentiometer = data.potentiometer;
 
+      addPotValue(data.potentiometer);
+      medianPot = calculateMedianPot();
+
+
       // Send data to the second core via a queue
       if (xQueueSend(sensorDataQueue, &data, (TickType_t)10) != pdPASS) {
           // Serial.println("Failed to send data to queue");
@@ -1579,6 +1626,7 @@ void datagathering(void* pvParameters) {
                         String(lastconductivityreading) + "," + //+ " mS/cm, " +
                         String(data.temperature) + "," +
                         String(data.potentiometer) + "," +
+                        String(medianPot) + "," +
                         String(gliderState); //+ " Celsius";
       writeSD(logData);
     //   Serial.println(logData);
