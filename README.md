@@ -12,3 +12,5 @@ Contact information:
 Oskar Andersson - Oskar.simon.andersson@gmail.com (Programming, CAD)
 
 Peo Gradin - peo.gradin@live.se (Electronics, Programming)
+
+Joel Janson - joeljanson19@gmail.com (Hardware)
